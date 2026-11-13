@@ -22,7 +22,7 @@ Tugboat uses only the Python standard library. It has no third-party package at 
 ## Install
 
 ```sh
-uv tool install git+https://github.com/selcukyucel/tugboat@v0.6.0
+uv tool install git+https://github.com/selcukyucel/tugboat@v0.7.0
 tug version
 ```
 
@@ -37,6 +37,7 @@ To remove the command: `uv tool uninstall tugboat`.
 | `tug version` | Prints the installed version | Works |
 | `tug team new <folder>` | Writes the starter layout of a team repo into an empty folder | Works |
 | `tug team check [folder]` | Checks every file Tugboat reads in a team repo | Works |
+| `tug team propose` | Proposes a change to the team repo as a pull request | Works |
 | `tug init` | Sets up the app repo it is run in | Partly. It detects the repo, asks you to confirm, and stops. It changes nothing yet. |
 | `tug sync` | Brings the team repo clone, an app repo's copy of it, and the agent tool files up to date | Works. The first run needs `--team-repo` and `--app-repo`. |
 | `tug status` | Prints the session brief | Not built yet |
@@ -63,6 +64,26 @@ The starter layout explains itself: its `README.md` gives the layout, and each f
 Structured files are JSON. Rules, notes, decision records, and agent definitions are Markdown files with a small header.
 
 `tug team check` checks all of them and prints one line per problem. It exits with `1` when a file is not valid. The starter layout runs the same check on every pull request.
+
+## Proposing a change to the team repo
+
+Team content changes only through a pull request that a person merges. `tug team propose` makes one:
+
+```sh
+tug team propose --title "Add a note on token refresh" \
+  --body "Found while fixing the login bug." \
+  --file knowledge/auth/tokens.md=./tokens.md
+```
+
+It pushes a branch named `tug/...` with the files, and opens the pull request with the GitHub command-line tool `gh` when that is installed. Otherwise it prints the link to open it.
+
+- It never merges, and it never pushes to `main`.
+- It asks you to confirm first. `--yes` skips the question.
+- It works in a temporary copy. The clone that sync keeps stays on `main`, and no app repo is written to.
+- It only changes team content: the profile, rules, permissions, knowledge, decisions, the estate map, agents, and skills. It refuses to touch CI workflows.
+- A change that would fail `tug team check` is refused before anything is pushed. A problem that was already on `main` does not block a fix.
+- `--remove PATH` removes a file. `--file` and `--remove` can be given more than once.
+- Git must know your name and email. Tugboat does not let Git make one up from the machine's name.
 
 ## Init
 

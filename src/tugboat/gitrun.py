@@ -72,4 +72,6 @@ def run_process(argv: Sequence[str], *, action: str, cwd: Path | None = None, ti
 
 def git(*args: str, cwd: Path | None = None, timeout: float = DEFAULT_TIMEOUT) -> str:
     """Run `git <args>` and return what it printed, without the final line break."""
-    return run_process(["git", *args], action=args[0], cwd=cwd, timeout=timeout).rstrip("\n")
+    # The Git command, skipping any `-c name=value` in front of it.
+    action = next((arg for arg in args if not arg.startswith("-") and "=" not in arg), args[0])
+    return run_process(["git", *args], action=action, cwd=cwd, timeout=timeout).rstrip("\n")

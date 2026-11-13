@@ -69,6 +69,19 @@ def _configure_team(parser: argparse.ArgumentParser) -> None:
         description="Check every file Tugboat reads in a team repo. Exits with 1 when a file is not valid.",
     )
     check.add_argument("folder", nargs="?", default=".", help="the team repo folder (default: the current folder)")
+    propose = actions.add_parser(
+        "propose",
+        help="Propose a change to the team repo as a pull request",
+        description="Push a branch with the given files and open a pull request in the team repo. "
+        "Nothing is merged: a person reviews and merges it in GitHub.",
+    )
+    propose.add_argument("--title", required=True, help="one line that says what the change is")
+    propose.add_argument("--body", default="", help="why the change is proposed")
+    propose.add_argument("--body-file", metavar="FILE", help="read the description from a file instead")
+    propose.add_argument("--file", action="append", default=[], metavar="TEAM_PATH=LOCAL_FILE", help="put a local file at a path in the team repo. Can be given more than once.")
+    propose.add_argument("--remove", action="append", default=[], metavar="TEAM_PATH", help="remove a file from the team repo. Can be given more than once.")
+    propose.add_argument("--team-repo", metavar="ADDRESS", help="the team repo. Not needed inside an app repo that Tugboat was set up in.")
+    propose.add_argument("--yes", action="store_true", help="open the pull request without being asked")
 
 
 def _team(args: argparse.Namespace) -> int:
@@ -81,6 +94,9 @@ def _team(args: argparse.Namespace) -> int:
             print(f"wrote {path}")
         print(f"Wrote {len(written)} files to {args.folder}. Review them, then commit and push them yourself.")
         return EXIT_OK
+
+    if args.team_command == "propose":
+        return _team_propose(args)
 
     report = team_repo.check_team_repo(args.folder)
     for problem in report.problems:
@@ -165,6 +181,53 @@ def _hook(args: argparse.Namespace) -> int:
     return hook.main(args.event)
 
 
+def _team_propose(args: argparse.Namespace) -> int:
+    from pathlib import Path
+
+    from tugboat import apprepo, teamcopy, teampr
+    from tugboat.address import parse_team_repo_address
+
+    if args.team_repo:
+        address = parse_team_repo_address(args.team_repo)
+    else:
+        try:
+            state = teamcopy.read_state(apprepo.find_app_repo("."))
+        except TugError:
+            state = None
+        if state is None:
+            raise TugError("this folder is not set up with Tugboat. Pass --team-repo ADDRESS.")
+        address = parse_team_repo_address(state["team_repo"])
+
+    changes: dict[str, bytes | None] = {}
+    for item in args.file:
+        team_path, separator, local = item.partition("=")
+        if not separator or not team_path or not local:
+            raise TugError(f"--file must look like TEAM_PATH=LOCAL_FILE (got '{item}')")
+        try:
+            changes[team_path] = Path(local).read_bytes()
+        except OSError as error:
+            raise TugError(f"cannot read {local}: {error.strerror or error}") from error
+    for team_path in args.remove:
+        changes[team_path] = None
+    body = args.body
+    if args.body_file:
+        try:
+            body = Path(args.body_file).read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as error:
+            raise TugError(f"cannot read {args.body_file}: {error}") from error
+
+    if not args.yes:
+        print(f"This opens a pull request in {address.slug}: {args.title}")
+        for team_path, content in changes.items():
+            print(f"  {'remove' if content is None else 'write '} {team_path}")
+        if not sys.stdin.isatty():
+            raise TugError("a pull request needs a person to confirm it. Run this in a terminal, or pass --yes. Nothing was proposed.")
+        if input("Open this pull request? [y/N] ").strip().lower() not in {"y", "yes"}:
+            raise TugError("stopped. Nothing was proposed.")
+    print(teampr.render(teampr.propose(address, title=args.title, body=body, changes=changes)))
+    return EXIT_OK
+
+
 COMMANDS: tuple[Command, ...] = (
     Command("version", "Print the installed version", _version),
     Command("init", "Set up the app repo it is run in. So far it detects the repo and stops.", _init, _configure_init),
@@ -174,7 +237,7 @@ COMMANDS: tuple[Command, ...] = (
     Command("update", "Update tug to the newest release"),
     Command("expire", "Remove records older than six months, after confirmation"),
     Command("remove", "Take Tugboat out of this repo, or out of every repo on this machine"),
-    Command("team", "Start or check a team repo: `tug team new`, `tug team check`", _team, _configure_team),
+    Command("team", "Start, check, or propose a change to a team repo: `tug team new`, `check`, `propose`", _team, _configure_team),
     Command("hook", "Called by the agent tool's hooks. Not typed by a developer.", _hook, _configure_hook),
 )
 
