@@ -261,7 +261,10 @@ class SessionStartHookTests(HostCase):
         self.assertIn("Tugboat sync report, from the start of this session:", text)
         self.assertIn("Updated from ", text)
         self.assertIn("because the team repo has a new revision", text)
+        self.assertIn("Changed in the team repo since this repo's last sync (", text)
+        self.assertIn("- Rule added: IOS-002 (.tugboat/team/policies/ios/IOS-002.md)", text)
         self.assertTrue((self.copy / "policies/ios/IOS-002.md").is_file())
+        self.assertIn("The report lists what changed in the team repo since the last sync", (self.app / ".claude/rules/tugboat.md").read_text(encoding="utf-8"))
 
     def test_a_failure_inside_the_hook_is_one_line_for_the_agent_not_a_crash(self):
         appsync.run(self.app, self.address)

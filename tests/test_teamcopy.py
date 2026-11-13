@@ -3,7 +3,8 @@ import stat
 import unittest
 from unittest import mock
 
-from tugboat import apprepo, sync, teamcopy
+from tugboat import apprepo, frontmatter, sync, teamcopy
+from tugboat.teamcopy import Change
 from tugboat.errors import TugError
 from tugboat.version import Version
 
@@ -77,6 +78,103 @@ class RefreshTests(CopyCase):
         self.assertTrue((self.copy / "policies/ios/IOS-002.md").is_file())
         self.assertFalse((self.copy / "knowledge").exists())
         self.assertEqual(self.status(), "")
+
+    def test_a_refresh_lists_what_changed_for_the_agent_with_the_file_to_read(self):
+        first = self.refresh()
+        rule = {"id": "IOS-002", "title": "New  unit tests\tuse Swift Testing", "scope": "ios", "mode": "advisory", "status": "adopted"}
+        files = {
+            "policies/ios/IOS-001.md": "rule one, changed\n",
+            "policies/ios/IOS-002.md": frontmatter.render(rule, "Use it."),
+            "policies/README.md": "about rules\n",
+            "permissions/protected-paths.json": "{}\n",
+            "knowledge/payments/refunds.md": frontmatter.render({"title": "Refunds"}, "How refunds work."),
+            "skills/new-screen/SKILL.md": "steps\n",
+            "skills/new-screen/template.swift": "// t\n",
+            "decisions/DEC-0001-swift-testing.md": frontmatter.render({"title": "Use Swift Testing"}, "Why."),
+            "agents/reviewer.md": "an agent\n",
+            "estate/estate.json": "{}\n",
+            "profile.json": "{}\n",
+            ".github/workflows/check.yml": "name: check again\n",
+        }
+        for path, text in files.items():
+            (self.work / path).parent.mkdir(parents=True, exist_ok=True)
+            (self.work / path).write_text(text, encoding="utf-8")
+        self.git(self.work, "rm", "--quiet", "knowledge/auth/tokens.md")
+        last = self.push("README.md", "two\n")
+        report = self.refresh()
+        team = ".tugboat/team"
+        self.assertEqual(
+            report.changes,
+            (
+                Change("Rule", "changed", "IOS-001", None, f"{team}/policies/ios/IOS-001.md"),
+                Change("Rule", "added", "IOS-002", "New unit tests use Swift Testing", f"{team}/policies/ios/IOS-002.md"),
+                Change("Permissions", "added", "protected paths", None, f"{team}/permissions/protected-paths.json"),
+                Change("Note", "removed", "auth/tokens.md", None, None),
+                Change("Note", "added", "payments/refunds.md", "Refunds", f"{team}/knowledge/payments/refunds.md"),
+                Change("Skill", "added", "new-screen", None, f"{team}/skills/new-screen/SKILL.md"),
+                Change("Decision record", "added", "DEC-0001-swift-testing", "Use Swift Testing", f"{team}/decisions/DEC-0001-swift-testing.md"),
+                Change("Agent", "added", "reviewer", None, f"{team}/agents/reviewer.md"),
+                Change("Estate map", "added", "", None, f"{team}/estate/estate.json"),
+                Change("Profile", "added", "", None, f"{team}/profile.json"),
+                Change("Other file", "added", "policies/README.md", None, f"{team}/policies/README.md"),
+            ),
+        )
+        text = teamcopy.render(report, self.app)
+        self.assertIn(f"Changed in the team repo since this repo's last sync ({first.revision[:7]} to {last[:7]}):", text)
+        for line in (
+            '- Rule added: IOS-002 "New unit tests use Swift Testing" (.tugboat/team/policies/ios/IOS-002.md)',
+            "- Rule changed: IOS-001 (.tugboat/team/policies/ios/IOS-001.md)",
+            "- Note removed: auth/tokens.md\n",
+            "- Skill added: new-screen (.tugboat/team/skills/new-screen/SKILL.md)",
+            "- Profile added (.tugboat/team/profile.json)",
+        ):
+            self.assertIn(line, text + "\n")
+        for change in report.changes:
+            if change.path:
+                self.assertTrue((self.app / change.path).is_file(), change.path)
+
+        # A file inside a skill changes the skill. Removing its SKILL.md removes it.
+        self.push("skills/new-screen/template.swift", "// t2\n")
+        self.assertEqual(self.refresh().changes, (Change("Skill", "changed", "new-screen", None, f"{team}/skills/new-screen/SKILL.md"),))
+        self.git(self.work, "rm", "--quiet", "-r", "skills")
+        self.git(self.work, "commit", "--quiet", "-m", "remove skill")
+        self.git(self.work, "push", "--quiet", "origin", "HEAD:main")
+        self.assertEqual(self.refresh().changes, (Change("Skill", "removed", "new-screen", None, None),))
+        # A second sync with nothing new lists nothing.
+        again = self.refresh()
+        self.assertEqual((again.refreshed, again.changes), (False, ()))
+
+    def test_a_first_copy_lists_no_changes(self):
+        report = self.refresh()
+        self.assertEqual(report.changes, ())
+        self.assertNotIn("since this repo's last sync", teamcopy.render(report, self.app))
+
+    def test_only_a_change_outside_what_an_agent_reads(self):
+        self.refresh()
+        self.push(".github/workflows/check.yml", "name: check again\n")
+        report = self.refresh()
+        self.assertEqual((report.refreshed, report.changes), (True, ()))
+        self.assertIn("Nothing that an agent reads changed in the team repo since this repo's last sync.", teamcopy.render(report, self.app))
+
+    def test_a_previous_revision_that_the_clone_does_not_have_gives_no_list_and_never_reaches_git_as_an_option(self):
+        self.refresh()
+        state_file = self.app / ".tugboat/state.json"
+        for fake in ("0" * 40, "--output=" + os.fspath(self.tmp / "written-by-git")):
+            state_file.write_text(state_file.read_text(encoding="utf-8").replace(self.git(self.work, "rev-parse", "HEAD"), fake), encoding="utf-8")
+            self.push("policies/ios/IOS-001.md", f"rule one, after {len(fake)}\n")
+            report = self.refresh()
+            self.assertIsNone(report.changes)
+            self.assertIn("could not be listed", teamcopy.render(report, self.app))
+        self.assertFalse((self.tmp / "written-by-git").exists())
+
+    def test_a_long_list_is_cut_and_counted(self):
+        self.refresh()
+        for number in range(teamcopy.MAX_LISTED + 3):
+            (self.work / f"knowledge/n{number:02}.md").write_text("a note\n", encoding="utf-8")
+        self.push("knowledge/last.md", "a note\n")
+        text = teamcopy.render(self.refresh(), self.app)
+        self.assertEqual(text.count("- Note added: "), teamcopy.MAX_LISTED)
+        self.assertIn("- and 4 more", text)
 
     def test_a_new_tool_version_refreshes_the_copy(self):
         self.refresh()

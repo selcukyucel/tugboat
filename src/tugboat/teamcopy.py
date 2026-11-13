@@ -17,6 +17,7 @@ from __future__ import annotations
 import contextlib
 import io
 import os
+import re
 import shutil
 import subprocess
 import tarfile
@@ -24,7 +25,7 @@ import tempfile
 from pathlib import Path
 from typing import Any, NamedTuple
 
-from tugboat import apprepo, paths
+from tugboat import apprepo, frontmatter, paths
 from tugboat.address import TeamRepoAddress
 from tugboat.errors import DataError, TugError
 from tugboat.gitrun import GitError, git, git_environment
@@ -41,6 +42,23 @@ COPIED = ("tugboat.json", "profile.json", "policies", "permissions", "knowledge"
 MAX_FILES = 5000
 MAX_BYTES = 50 * 1024 * 1024
 ARCHIVE_TIMEOUT = 60.0
+MAX_LISTED = 20  # changes named in a report. The rest are counted.
+MAX_TITLE_BYTES = 64 * 1024
+# The kinds of change, in the order a report lists them.
+KINDS = ("Rule", "Permissions", "Note", "Skill", "Decision record", "Agent", "Estate map", "Profile", "Other file")
+_ACTIONS = {"A": "added", "M": "changed", "D": "removed", "T": "changed"}
+_REVISION = re.compile(r"^[0-9a-f]{40,64}$")
+_PERMISSION_FILES = {"protected-paths.json": "protected paths", "ai-tools.json": "approved AI tools"}
+
+
+class Change(NamedTuple):
+    """One thing that differs between two revisions of the team repo, as an agent needs to hear it."""
+
+    kind: str  # one of KINDS
+    action: str  # "added", "changed", or "removed"
+    name: str  # a rule ID, a note's path, a skill's name. Empty where the kind says it all.
+    title: str | None
+    path: str | None  # the file to read, relative to the app repo. None when it was removed.
 
 
 class CopyReport(NamedTuple):
@@ -51,6 +69,8 @@ class CopyReport(NamedTuple):
     previous_revision: str | None  # what it held before, when that differs
     files: int
     skipped: tuple[str, ...]  # entries that were not copied, such as links
+    # What differs from the revision this repo held before. None when that could not be worked out.
+    changes: tuple[Change, ...] | None = ()
 
 
 def copy_path(repo: Path) -> Path:
@@ -77,6 +97,71 @@ def approved_revision(clone: Path) -> str:
         return git("rev-parse", "--verify", "--quiet", f"refs/remotes/origin/{BRANCH}^{{commit}}", cwd=clone)
     except GitError as error:
         raise TugError(f"the clone at {clone} has no fetched '{BRANCH}' yet. Run sync first.") from error
+
+
+def _classify(path: str) -> tuple[str, str, str]:
+    """Return (kind, name, the file an agent reads) for one path of the team repo."""
+    parts = path.split("/")
+    base, top = parts[-1], parts[0]
+    markdown = base.endswith(".md") and base != "README.md"
+    if top == "policies" and len(parts) == 3 and markdown:
+        return "Rule", base[:-3], path
+    if top == "permissions" and len(parts) == 2 and base in _PERMISSION_FILES:
+        return "Permissions", _PERMISSION_FILES[base], path
+    if top == "knowledge" and markdown:
+        return "Note", "/".join(parts[1:]), path
+    if top == "skills" and len(parts) >= 3:
+        return "Skill", parts[1], f"skills/{parts[1]}/SKILL.md"
+    if top == "decisions" and len(parts) == 2 and markdown:
+        return "Decision record", base[:-3], path
+    if top == "agents" and len(parts) == 2 and markdown:
+        return "Agent", base[:-3], path
+    if path == "estate/estate.json":
+        return "Estate map", "", path
+    if path == "profile.json":
+        return "Profile", "", path
+    return "Other file", path, path
+
+
+def _title(file: Path) -> str | None:
+    """The title in a file's header, as one short line. None when there is none to read."""
+    try:
+        with file.open("rb") as handle:
+            fields, _ = frontmatter.parse(handle.read(MAX_TITLE_BYTES).decode("utf-8"))
+    except (OSError, UnicodeDecodeError, DataError):
+        return None
+    title = fields.get("title")
+    return " ".join(title.split())[:100] or None if isinstance(title, str) else None
+
+
+def changes_between(clone: Path, previous: object, revision: str, copy: Path) -> tuple[Change, ...] | None:
+    """What an agent should know changed from `previous` to `revision`. None when it cannot be worked out.
+
+    `previous` comes from a state file, so it is checked before Git sees it.
+    """
+    if not isinstance(previous, str) or not _REVISION.fullmatch(previous):
+        return None
+    try:
+        git("cat-file", "-e", f"{previous}^{{commit}}", cwd=clone)
+        raw = git("diff", "--name-status", "--no-renames", "-z", previous, revision, "--", *COPIED, cwd=clone)
+    except GitError:
+        return None
+    fields = raw.split("\0")
+    found: dict[tuple[str, str], tuple[str, str]] = {}  # (kind, name) -> (action, the file to read)
+    for status, path in zip(fields[0::2], fields[1::2]):
+        kind, name, read = _classify(path)
+        action = _ACTIONS.get(status[:1], "changed")
+        if kind == "Skill" and path != read:
+            # A file inside a skill changed. The skill itself is added or removed only with its SKILL.md.
+            found.setdefault((kind, name), ("changed", read))
+        else:
+            found[(kind, name)] = (action, read)
+    changes = []
+    for (kind, name), (action, read) in found.items():
+        gone = action == "removed"
+        title = None if gone or kind not in {"Rule", "Note", "Decision record"} else _title(copy / read)
+        changes.append(Change(kind, action, name, title, None if gone else f"{apprepo.LOCAL_FOLDER}/{COPY_FOLDER}/{read}"))
+    return tuple(sorted(changes, key=lambda change: (KINDS.index(change.kind), change.name)))
 
 
 def _archive(clone: Path, revision: str) -> bytes:
@@ -204,7 +289,21 @@ def refresh_copy(repo: Path, address: TeamRepoAddress, *, force: bool = False) -
         ),
     )
     previous = state["revision"] if state and state["revision"] != revision else None
-    return CopyReport(target, True, reason, revision, previous, files, skipped)
+    changes: tuple[Change, ...] | None = ()
+    if previous is not None and state["team_repo"] == address.url:
+        changes = changes_between(clone, previous, revision, target)
+    return CopyReport(target, True, reason, revision, previous, files, skipped, changes)
+
+
+def _change_words(change: Change) -> str:
+    words = f"{change.kind} {change.action}"
+    if change.name:
+        words += f": {change.name}"
+    if change.title:
+        words += f' "{change.title}"'
+    if change.path:
+        words += f" ({change.path})"
+    return words
 
 
 def render(report: CopyReport, repo: Path) -> str:
@@ -215,4 +314,13 @@ def render(report: CopyReport, repo: Path) -> str:
     lines = [f"Copy in this repo: refreshed to revision {short} ({report.files} files in {where}/), because {report.reason}."]
     if report.skipped:
         lines.append(f"Note: {len(report.skipped)} entr{'y was' if len(report.skipped) == 1 else 'ies were'} not copied because they are not plain files: {', '.join(report.skipped[:3])}.")
+    if report.previous_revision and report.changes is None:
+        lines.append("What changed in the team repo since this repo's last sync could not be listed.")
+    elif report.previous_revision and not report.changes:
+        lines.append("Nothing that an agent reads changed in the team repo since this repo's last sync.")
+    elif report.changes:
+        lines.append(f"Changed in the team repo since this repo's last sync ({report.previous_revision[:7]} to {short}):")
+        lines.extend(f"- {_change_words(change)}" for change in report.changes[:MAX_LISTED])
+        if len(report.changes) > MAX_LISTED:
+            lines.append(f"- and {len(report.changes) - MAX_LISTED} more")
     return "\n".join(lines)

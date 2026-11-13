@@ -22,7 +22,7 @@ Tugboat uses only the Python standard library. It has no third-party package at 
 ## Install
 
 ```sh
-uv tool install git+https://github.com/selcukyucel/tugboat@v0.9.0
+uv tool install git+https://github.com/selcukyucel/tugboat@v0.10.0
 tug version
 ```
 
@@ -210,6 +210,21 @@ Sync does three things.
 - The files are read-only. To change a rule or a note, open a pull request in the team repo.
 - Git ignores `.tugboat/`. Tugboat adds it to the repo's local exclude file and touches no tracked file.
 - Links in the team repo are not copied.
+
+When the copy moves to a new revision, sync lists what changed since this repo's last sync, with the file to read for each:
+
+```
+Changed in the team repo since this repo's last sync (bb959ef to 9e2ae27):
+- Rule added: IOS-002 "New unit tests use Swift Testing" (.tugboat/team/policies/ios/IOS-002.md)
+- Note removed: auth/tokens.md
+- Profile changed (.tugboat/team/profile.json)
+```
+
+- It lists rules, permissions, notes, skills, decision records, agents, the estate map, and the profile. A change to anything else in the team repo, such as a CI workflow, is not listed.
+- A change inside a skill's folder counts as a change of that skill.
+- The list holds at most 20 lines. The rest are counted.
+- The first copy in a repo lists nothing, and so does a refresh that only a new tool version caused.
+- The list is shown once, by the sync that applies the change. The session-start hook hands it to the agent, so the agent need not search for what is new.
 
 **It generates the files the agent tools load**, once, under `.claude/`. Claude Code, GitHub Copilot CLI, and GitHub Copilot in VS Code all read them, so nothing is written twice.
 

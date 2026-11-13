@@ -85,6 +85,7 @@ The copy comes from the team repo `{address.url}`.
 
 If no Tugboat sync report appeared at the start of this session, run `tug sync` first and read what it prints.
 If the report says that setup is not finished, tell the developer and offer the step it names.
+The report lists what changed in the team repo since the last sync, with the path of each file. Read the changed rules and notes that apply to the work at hand.
 
 ## Where things are
 
