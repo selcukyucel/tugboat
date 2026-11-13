@@ -16,6 +16,38 @@ Tugboat always protects its own generated files as well. They are not listed her
 
 ## `ai-tools.json`
 
-The approved AI tools, models, and MCP servers. The setup check reports anything configured on a machine that is not on this list.
+The register of approved AI tools. It has three groups:
+
+| Group | Holds |
+|---|---|
+| `agent_tools` | The agent tools the team works with, such as Claude Code |
+| `models` | The models the team may use |
+| `mcp_servers` | The MCP servers an agent tool may be connected to |
+
+**One rule for all three groups.** A group with entries is the whole list: anything else in that group is not approved. An empty group, `[]`, means the team has not made that list yet, so nothing in it is ruled out. The starter leaves `models` empty for that reason.
 
 Each entry has an `id`, a `name`, and an optional `note`.
+
+An MCP server entry also says how the server is recognised on a developer's machine:
+
+| Field | Meaning | Example |
+|---|---|---|
+| `hosts` | For a remote server: the host names of its address | `["api.githubcopilot.com"]` |
+| `commands` | For a server that runs on the machine: the program, or the package it runs. A version after the name is ignored. | `["figma-developer-mcp"]` |
+
+The name a developer gives a server in their own settings does not count. Anyone can call any server "github".
+
+```json
+{
+  "schema": "tug.ai-tools/1",
+  "agent_tools": [{"id": "claude-code", "name": "Claude Code"}],
+  "models": [],
+  "mcp_servers": [
+    {"id": "github", "name": "GitHub MCP server", "hosts": ["api.githubcopilot.com"]}
+  ]
+}
+```
+
+The agent is given this list at the start of each session and is told not to add or suggest anything that is not on it. The setup check, which is not built yet, will report an MCP server that is configured on a machine and is not on the list.
+
+Adding a tool, a model, or a server is a pull request in this repo that a person approves.

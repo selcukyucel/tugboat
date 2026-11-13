@@ -22,7 +22,7 @@ Tugboat uses only the Python standard library. It has no third-party package at 
 ## Install
 
 ```sh
-uv tool install git+https://github.com/selcukyucel/tugboat@v0.13.0
+uv tool install git+https://github.com/selcukyucel/tugboat@v0.14.0
 tug version
 ```
 
@@ -142,6 +142,25 @@ Adopting it is a pull request in the team repo that sets `status: adopted`. Unti
 - A page that cannot be read is not loaded. The sync report and the instruction file name it.
 - The agent is told to say so when a request would break the policy, and that it cannot make an exception itself.
 - A change to the page appears in the sync report as `AI use policy changed`.
+
+## AI tool register
+
+`permissions/ai-tools.json` in the team repo is the team's list of approved AI tools. It has three groups: `agent_tools`, `models`, and `mcp_servers`.
+
+- **One rule for all three.** A group with entries is the whole list, and anything else in that group is not approved. An empty group means the team has not made that list yet, so nothing in it is ruled out.
+- **It changes only through a pull request** in the team repo that a person approves.
+- **The agent gets the list** at the start of each session, in the instruction file, and is told not to add, set up, or suggest anything that is not on it.
+
+An MCP server entry says how the server is recognised on a machine:
+
+| Field | Meaning |
+|---|---|
+| `hosts` | For a remote server: the host names of its address, such as `api.githubcopilot.com`. Only the exact host counts. |
+| `commands` | For a server that runs on the machine: the program, or the package it runs, such as `figma-developer-mcp`. A version after the name is ignored. |
+
+The name a developer gives a server in their own settings is not used. Anyone can call any server "github".
+
+The setup check that compares the servers configured on a machine with this list is not built yet. The register and the way a server is matched are ready for it.
 
 ## Proposing a change to the team repo
 

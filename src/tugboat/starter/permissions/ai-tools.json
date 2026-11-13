@@ -19,12 +19,14 @@
     {
       "id": "github",
       "name": "GitHub MCP server",
-      "note": "Pull requests, checks, and GitHub Projects."
+      "note": "Pull requests, checks, and GitHub Projects.",
+      "hosts": ["api.githubcopilot.com"]
     },
     {
       "id": "atlassian",
       "name": "Atlassian MCP server",
-      "note": "Jira stories. Remove it if the project does not use Jira."
+      "note": "Jira stories. Remove it if the project does not use Jira.",
+      "hosts": ["mcp.atlassian.com"]
     }
   ]
 }

@@ -56,6 +56,8 @@ _RULE_ID = re.compile(r"^(COM|IOS|AND)-[0-9]{3}$")
 _DECISION_ID = re.compile(r"^DEC-[0-9]{4}$")
 _TOOL_NAME = re.compile(r"^[A-Za-z][A-Za-z0-9_.:*()-]{0,99}$")
 _BRANCH = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,99}$")
+_HOST = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$")
+_COMMAND_WORD = re.compile(r"^[@A-Za-z0-9][A-Za-z0-9@/._+-]{0,99}$")
 
 
 def _schema(data: Mapping[str, Any], expected: str, label: str) -> None:
@@ -185,15 +187,29 @@ def validate_ai_tools(data: object) -> dict[str, Any]:
         for index, raw in enumerate(require_list(document[group], f"{label} {group}", maximum=100)):
             item_label = f"{label} {group}[{index}]"
             entry = require_object(raw, item_label)
-            require_exact_fields(entry, required=frozenset({"id", "name"}), optional=frozenset({"note"}), label=item_label)
+            # Only an MCP server needs a way to be recognised on a machine.
+            known_by = frozenset({"hosts", "commands"}) if group == "mcp_servers" else frozenset()
+            require_exact_fields(entry, required=frozenset({"id", "name"}), optional=frozenset({"note"}) | known_by, label=item_label)
             checked = {
                 "id": validate_slug(entry["id"], f"{item_label} id", 60),
                 "name": require_text(entry["name"], f"{item_label} name", 100),
             }
             if "note" in entry:
                 checked["note"] = require_text(entry["note"], f"{item_label} note", 300)
+            for field, pattern, what in (("hosts", _HOST, "a host name in lowercase, such as mcp.example.com"), ("commands", _COMMAND_WORD, "a program or package name with no spaces")):
+                if field not in entry:
+                    continue
+                words = [require_text(item, f"{item_label} {field} item", 100) for item in require_list(entry[field], f"{item_label} {field}", maximum=10, minimum=1)]
+                for word in words:
+                    if not pattern.fullmatch(word):
+                        raise DataError(f"{item_label} {field} item '{word}' must be {what}")
+                checked[field] = require_unique(words, f"{item_label} {field}")
             entries.append(checked)
         require_unique([entry["id"] for entry in entries], f"{label} {group}")
+        if group == "mcp_servers":
+            # One host or command cannot stand for two servers.
+            require_unique([word for entry in entries for word in entry.get("hosts", [])], f"{label} {group} hosts")
+            require_unique([word for entry in entries for word in entry.get("commands", [])], f"{label} {group} commands")
         result[group] = entries
     return result
 

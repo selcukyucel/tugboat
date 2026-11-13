@@ -20,7 +20,7 @@ from importlib.resources.abc import Traversable
 from pathlib import Path
 from typing import NamedTuple
 
-from tugboat import aiuse, apprepo, detect, formats, frontmatter, profile, rules, settingsmerge, teamcopy
+from tugboat import aitools, aiuse, apprepo, detect, formats, frontmatter, profile, rules, settingsmerge, teamcopy
 from tugboat.address import TeamRepoAddress
 from tugboat.errors import DataError, TugError
 from tugboat.gitrun import GitError, git
@@ -108,7 +108,7 @@ The report lists what changed in the team repo since the last sync, with the pat
 - Decision records: `{COPY}/decisions/`.
 - Owners of apps and modules: `{COPY}/estate/estate.json`.
 - Protected paths: `{COPY}/permissions/protected-paths.json`. Ask the developer before any edit to a file that matches.
-- Approved AI tools and MCP servers: `{COPY}/permissions/ai-tools.json`.
+- Approved AI tools, models, and MCP servers: the section "Approved AI tools" below.
 
 ## Limits
 
@@ -195,7 +195,11 @@ def desired_units(repo: Path, address: TeamRepoAddress) -> tuple[list[_Unit], li
     policy = aiuse.load(repo)
     if policy.problem:
         problems.append(policy.problem)
-    text = pointer_text(address, rules.render(ruleset, state["revision"] if state else None) + "\n" + aiuse.render(policy))
+    register = aitools.load(repo)
+    if register.problem:
+        problems.append(register.problem)
+    sections = (rules.render(ruleset, state["revision"] if state else None), aiuse.render(policy), aitools.render(register))
+    text = pointer_text(address, "\n".join(sections))
     units = [_Unit("the instruction file", f"/{RULES_FILE}", {RULES_FILE: text.encode("utf-8")})]
     team_skills = _skill_units(copy, problems)
     units += team_skills
