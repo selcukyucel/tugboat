@@ -70,10 +70,31 @@ def _team(args: argparse.Namespace) -> int:
     return EXIT_ERROR if errors else EXIT_OK
 
 
+def _configure_sync(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--team-repo",
+        metavar="ADDRESS",
+        help="the team repo, as git@github.com:owner/name.git or https://github.com/owner/name.git. "
+        "Needed until `tug init` can record it for an app repo.",
+    )
+
+
+def _sync(args: argparse.Namespace) -> int:
+    from tugboat import sync
+    from tugboat.address import parse_team_repo_address
+
+    if not args.team_repo:
+        raise TugError("this folder is not set up yet, and `tug init` is not built. Until then, pass --team-repo ADDRESS.")
+    report = sync.sync_team_repo(parse_team_repo_address(args.team_repo))
+    print(sync.render(report))
+    # A sync that did not work still lets work go on, as long as there is a clone to work from.
+    return EXIT_OK if report.usable else EXIT_ERROR
+
+
 COMMANDS: tuple[Command, ...] = (
     Command("version", "Print the installed version", _version),
     Command("init", "Set up the app repo it is run in"),
-    Command("sync", "Pull the team repo and refresh the local files"),
+    Command("sync", "Bring the local clone of the team repo up to date", _sync, _configure_sync),
     Command("status", "Print the session brief"),
     Command("doctor", "Check that this machine and repo are ready"),
     Command("update", "Update tug to the newest release"),

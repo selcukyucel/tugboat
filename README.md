@@ -8,7 +8,7 @@ It runs beside Claude Code, GitHub Copilot CLI, and GitHub Copilot in VS Code. I
 
 ## Status
 
-Early. This version can start and check a team repo. It cannot yet set up an app repo or sync.
+Early. This version can start and check a team repo, and keep a local clone of it up to date. It cannot yet set up an app repo.
 A command that is not written yet is listed and answers "not built yet". Nothing here is ready for daily use.
 
 ## Requirements
@@ -22,7 +22,7 @@ Tugboat uses only the Python standard library. It has no third-party package at 
 ## Install
 
 ```sh
-uv tool install git+https://github.com/selcukyucel/tugboat@v0.2.0
+uv tool install git+https://github.com/selcukyucel/tugboat@v0.3.0
 tug version
 ```
 
@@ -38,7 +38,7 @@ To remove the command: `uv tool uninstall tugboat`.
 | `tug team new <folder>` | Writes the starter layout of a team repo into an empty folder | Works |
 | `tug team check [folder]` | Checks every file Tugboat reads in a team repo | Works |
 | `tug init` | Sets up the app repo it is run in | Not built yet |
-| `tug sync` | Pulls the team repo and refreshes the local files | Not built yet |
+| `tug sync --team-repo <address>` | Brings the local clone of the team repo up to date | Works. It does not yet refresh an app repo. |
 | `tug status` | Prints the session brief | Not built yet |
 | `tug doctor` | Checks that this machine and repo are ready | Not built yet |
 | `tug update` | Updates `tug` to the newest release | Not built yet |
@@ -63,6 +63,18 @@ The starter layout explains itself: its `README.md` gives the layout, and each f
 Structured files are JSON. Rules, notes, decision records, and agent definitions are Markdown files with a small header.
 
 `tug team check` checks all of them and prints one line per problem. It exits with `1` when a file is not valid. The starter layout runs the same check on every pull request.
+
+## Sync
+
+`tug sync --team-repo git@github.com:owner/name.git` clones the team repo the first time and moves the clone forward after that.
+The clone lives at `~/.tugboat/team-repos/<host>/<owner>/<name>`.
+
+- A sync that fails does not stop work. It says why, and gives the time of the last sync that worked.
+- The clone only moves forward to what GitHub has. Nothing is merged, rebased, or reset.
+- Local edits in the clone are never discarded. They are reported.
+- Git is never allowed to wait for a password or a prompt, because sync will run where nobody can answer.
+
+The `--team-repo` option is needed until `tug init` can record the address for an app repo.
 
 ## Development
 
