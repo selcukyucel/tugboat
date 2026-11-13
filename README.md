@@ -22,7 +22,7 @@ Tugboat uses only the Python standard library. It has no third-party package at 
 ## Install
 
 ```sh
-uv tool install git+https://github.com/selcukyucel/tugboat@v0.5.0
+uv tool install git+https://github.com/selcukyucel/tugboat@v0.6.0
 tug version
 ```
 
@@ -37,7 +37,7 @@ To remove the command: `uv tool uninstall tugboat`.
 | `tug version` | Prints the installed version | Works |
 | `tug team new <folder>` | Writes the starter layout of a team repo into an empty folder | Works |
 | `tug team check [folder]` | Checks every file Tugboat reads in a team repo | Works |
-| `tug init` | Sets up the app repo it is run in | Not built yet |
+| `tug init` | Sets up the app repo it is run in | Partly. It detects the repo, asks you to confirm, and stops. It changes nothing yet. |
 | `tug sync` | Brings the team repo clone, an app repo's copy of it, and the agent tool files up to date | Works. The first run needs `--team-repo` and `--app-repo`. |
 | `tug status` | Prints the session brief | Not built yet |
 | `tug doctor` | Checks that this machine and repo are ready | Not built yet |
@@ -63,6 +63,27 @@ The starter layout explains itself: its `README.md` gives the layout, and each f
 Structured files are JSON. Rules, notes, decision records, and agent definitions are Markdown files with a small header.
 
 `tug team check` checks all of them and prints one line per problem. It exits with `1` when a file is not valid. The starter layout runs the same check on every pull request.
+
+## Init
+
+Run `tug init` inside an existing app repo. It asks nothing about the repo. It reads:
+
+- the GitHub address, from the remote called `origin`
+- the default branch, from the clone's own record of the remote, or from GitHub when the clone has none
+- the platform: iOS when the repo has an Xcode project or workspace, Android when it has Gradle files of an Android project
+
+It shows what it found and asks you to confirm. `--yes` skips the question.
+
+It stops with the reason, and changes nothing, when:
+
+- the folder is not inside a Git repo, or is a team repo
+- the repo has no remote, or the remote is not a GitHub address
+- no iOS or Android project is found. Gradle files alone do not count: a backend can use Gradle too.
+- the repo holds both an iOS and an Android project. Then run it with `--platform ios` or `--platform android`.
+
+Projects under `Pods/`, `Carthage/`, `node_modules/`, and similar folders are not counted. A token inside a remote URL is never shown or saved.
+
+The steps after detection are not built yet: choosing the team repo and the project's settings.
 
 ## Sync
 

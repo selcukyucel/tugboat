@@ -48,3 +48,20 @@ def parse_team_repo_address(text: object) -> TeamRepoAddress:
     raise DataError(
         "the team repo address must look like git@github.com:owner/name.git or https://github.com/owner/name.git"
     )
+
+
+_USERINFO = re.compile(r"^(https://)[^/@]+@")
+
+
+def parse_remote_url(text: object) -> TeamRepoAddress | None:
+    """Read the URL of a Git remote. Return None when it is not a GitHub-style address.
+
+    A remote may carry a user name or a token before the host. It is dropped,
+    so it is never printed and never saved.
+    """
+    if not isinstance(text, str):
+        return None
+    try:
+        return parse_team_repo_address(_USERINFO.sub(r"\1", text.strip()))
+    except DataError:
+        return None

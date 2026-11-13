@@ -57,7 +57,7 @@ class DispatchTests(unittest.TestCase):
 
     def test_a_planned_command_says_it_is_not_built_and_does_nothing(self):
         planned = [command.name for command in cli.COMMANDS if command.handler is None]
-        self.assertIn("init", planned)
+        self.assertIn("doctor", planned)
         for name in planned:
             with self.subTest(name=name):
                 code, out, err = run(name, "--anything", "extra")

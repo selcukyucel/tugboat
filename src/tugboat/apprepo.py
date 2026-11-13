@@ -20,7 +20,7 @@ _BLOCK_END = "# <<< tugboat"
 
 def find_app_repo(start: str | os.PathLike[str]) -> Path:
     """The top folder of the Git repo that holds `start`."""
-    folder = Path(start)
+    folder = Path(start).resolve()
     if not folder.is_dir():
         raise TugError(f"{folder} is not a folder")
     try:

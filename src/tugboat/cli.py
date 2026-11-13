@@ -33,6 +33,27 @@ def _version(_args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _configure_init(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--yes", action="store_true", help="accept what was detected without being asked")
+    parser.add_argument("--platform", choices=("ios", "android"), help="only for a repo that holds both an iOS and an Android project")
+
+
+def _init(args: argparse.Namespace) -> int:
+    from tugboat import detect
+
+    found = detect.detect(".", platform=args.platform)
+    print("Tugboat found this:")
+    print(detect.render(found))
+    if not args.yes:
+        if not sys.stdin.isatty():
+            raise TugError("init needs a person to confirm what it found. Run it in a terminal, or pass --yes. Nothing was changed.")
+        answer = input("Is this right? [y/N] ").strip().lower()
+        if answer not in {"y", "yes"}:
+            raise TugError("stopped. Nothing was changed.")
+    print("Confirmed. The next steps of init are not built yet: the team repo and the project's choices. Nothing was changed.")
+    return EXIT_NOT_BUILT
+
+
 def _configure_team(parser: argparse.ArgumentParser) -> None:
     actions = parser.add_subparsers(dest="team_command", metavar="<action>", required=True)
     new = actions.add_parser(
@@ -146,7 +167,7 @@ def _hook(args: argparse.Namespace) -> int:
 
 COMMANDS: tuple[Command, ...] = (
     Command("version", "Print the installed version", _version),
-    Command("init", "Set up the app repo it is run in"),
+    Command("init", "Set up the app repo it is run in. So far it detects the repo and stops.", _init, _configure_init),
     Command("sync", "Bring the team repo clone, this repo's copy, and the agent tool files up to date", _sync, _configure_sync),
     Command("status", "Print the session brief"),
     Command("doctor", "Check that this machine and repo are ready"),
