@@ -126,6 +126,11 @@ def check_team_repo(root: str | os.PathLike[str]) -> Report:
     check.json_file("estate/estate.json", formats.validate_estate)
 
     policies = root_path / "policies"
+    ai_use = policies / "ai-use.md"
+    if ai_use.exists() or ai_use.is_symlink():
+        check.markdown(ai_use, formats.validate_ai_use)
+    else:
+        check.warning("policies/ai-use.md", "is not there. The team has no AI use policy.")
     for folder in sorted(item for item in policies.iterdir() if item.is_dir()) if policies.is_dir() else ():
         if folder.name not in formats.RULE_SCOPES:
             check.error(folder, f"is not a rule scope. Rules are kept for {', '.join(formats.RULE_SCOPES)} only. Other code, such as a backend, keeps its own rules elsewhere.")

@@ -60,6 +60,35 @@ An agent that works in an iOS app repo gets the adopted `company/` rules and the
 
 When two rules conflict, or the work cannot follow a rule, the agent shows that to the developer. It does not choose, and it cannot grant an exception.
 
+## The AI use policy
+
+`ai-use.md` in this folder is one page that says how the team uses AI tools. It is not a rule file and has no ID.
+
+```
+---
+title: How we use AI tools
+status: example
+---
+
+A short introduction.
+
+## Data that must never enter a prompt
+
+...
+
+## Accounts
+
+...
+
+## Accountability
+
+...
+```
+
+- The three headings must be there. The page is at most 8,000 characters.
+- `status: example`: the page shows the format and is not given to the agent. `status: adopted`: the agent gets the whole page at the start of every session.
+- Edit the page until it says what your team means. Then adopt it with a pull request that sets `status: adopted`.
+
 ## No backend rules
 
 There are no backend rules here. Backend code keeps its own governance. `tug team check` reports a folder under `policies/` that is not `company`, `ios`, or `android`.

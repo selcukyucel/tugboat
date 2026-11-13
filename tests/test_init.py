@@ -405,12 +405,12 @@ class CriteriaSourceTests(InitCase):
         self.assertIn("Acceptance criteria will be read from section 'Acceptance criteria'.", out)
         self.assertIn("Nothing was merged.", out)
         # This machine works from its own copy at once. The approved copy in the repo waits for the merge.
-        self.assertNotIn("Setup is not finished", self.save("sync"))
+        self.assertNotIn("acceptance criteria is not chosen yet", self.save("sync"))
         self.assertIn("as this machine proposed it", self.save("profile", "show"))
 
         self.merge()
         text = self.hook_text()
-        self.assertNotIn("Setup is not finished", text)
+        self.assertNotIn("acceptance criteria is not chosen yet", text)
         self.assertIn("The profile change that this machine proposed was merged.", text)
         shown = self.save("profile", "show")
         self.assertIn("Project profile, approved in the team repo acme/team:", shown)

@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import NamedTuple
 
-from tugboat import hostfiles, profile, releases, sync, teamcopy
+from tugboat import aiuse, hostfiles, profile, releases, sync, teamcopy
 from tugboat.address import TeamRepoAddress
 from tugboat.errors import TugError
 from tugboat.version import Version, installed_version, parse_version
@@ -69,6 +69,10 @@ def run(repo: Path, address: TeamRepoAddress, *, force: bool = False, quick: boo
         host = hostfiles.apply(repo, address)
     except TugError as error:
         problem = str(error)
+    if copy is not None:
+        # Read from the copy that was just brought up to date.
+        step = aiuse.unfinished(aiuse.load(repo))
+        unfinished += (step,) if step else ()
     return AppSync(repo, report, copy, host, problem, unfinished, profile_note, minimum, newer)
 
 

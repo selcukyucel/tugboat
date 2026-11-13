@@ -20,7 +20,7 @@ from importlib.resources.abc import Traversable
 from pathlib import Path
 from typing import NamedTuple
 
-from tugboat import apprepo, detect, formats, frontmatter, profile, rules, settingsmerge, teamcopy
+from tugboat import aiuse, apprepo, detect, formats, frontmatter, profile, rules, settingsmerge, teamcopy
 from tugboat.address import TeamRepoAddress
 from tugboat.errors import DataError, TugError
 from tugboat.gitrun import GitError, git
@@ -103,6 +103,7 @@ The report lists what changed in the team repo since the last sync, with the pat
 ## Where things are
 
 - Rules: the section "Rules that apply in this repo" below lists them, with the file of each. `{COPY}/policies/README.md` explains the fields.
+- The team's AI use policy: the section "AI use policy" below.
 - Knowledge notes: `{COPY}/knowledge/`. Each note lists the code paths it covers in its header. Read the notes whose paths match the files of the current task.
 - Decision records: `{COPY}/decisions/`.
 - Owners of apps and modules: `{COPY}/estate/estate.json`.
@@ -191,7 +192,10 @@ def desired_units(repo: Path, address: TeamRepoAddress) -> tuple[list[_Unit], li
     state = teamcopy.read_state(repo)
     ruleset = rules.load(repo, repo_platform(repo, address))
     problems.extend(ruleset.problems)
-    text = pointer_text(address, rules.render(ruleset, state["revision"] if state else None))
+    policy = aiuse.load(repo)
+    if policy.problem:
+        problems.append(policy.problem)
+    text = pointer_text(address, rules.render(ruleset, state["revision"] if state else None) + "\n" + aiuse.render(policy))
     units = [_Unit("the instruction file", f"/{RULES_FILE}", {RULES_FILE: text.encode("utf-8")})]
     team_skills = _skill_units(copy, problems)
     units += team_skills

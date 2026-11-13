@@ -22,7 +22,7 @@ Tugboat uses only the Python standard library. It has no third-party package at 
 ## Install
 
 ```sh
-uv tool install git+https://github.com/selcukyucel/tugboat@v0.12.0
+uv tool install git+https://github.com/selcukyucel/tugboat@v0.13.0
 tug version
 ```
 
@@ -120,6 +120,28 @@ Adopting a rule and making it required are each a pull request in the team repo 
 - when two rules conflict, or the work cannot follow a rule, the agent is told to show that to the developer. It does not choose, and it cannot grant an exception.
 
 Today a required rule blocks through the agent's instructions only. The hooks that enforce a block are not built yet.
+
+## AI use policy
+
+One page in the team repo, `policies/ai-use.md`, says how the team uses AI tools. It has three sections, and `tug team check` refuses a page that lacks one:
+
+| Section | Says |
+|---|---|
+| `## Data that must never enter a prompt` | What is kept out of prompts, chats, and tool calls: secrets, personal data of real users, production data |
+| `## Accounts` | That only company accounts are used, and only the approved tools |
+| `## Accountability` | That the developer who opens a pull request is accountable for agent-written code in it |
+
+The page has a `status`, like a rule:
+
+- `example`: the page shows the format. It is not put in front of the agent. The starter layout ships it this way, because a policy is the team's own statement.
+- `adopted`: the page is in force. Sync writes its full text into the instruction file, `.claude/rules/tugboat.md`, which every agent tool loads at the start of every session, in every app repo of the project.
+
+Adopting it is a pull request in the team repo that sets `status: adopted`. Until then, each sync report says `Setup is not finished: the team has not adopted its AI use policy yet`.
+
+- The page is at most 8,000 characters: one page.
+- A page that cannot be read is not loaded. The sync report and the instruction file name it.
+- The agent is told to say so when a request would break the policy, and that it cannot make an exception itself.
+- A change to the page appears in the sync report as `AI use policy changed`.
 
 ## Proposing a change to the team repo
 

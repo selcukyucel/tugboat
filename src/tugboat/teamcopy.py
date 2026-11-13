@@ -45,7 +45,7 @@ ARCHIVE_TIMEOUT = 60.0
 MAX_LISTED = 20  # changes named in a report. The rest are counted.
 MAX_TITLE_BYTES = 64 * 1024
 # The kinds of change, in the order a report lists them.
-KINDS = ("Rule", "Permissions", "Note", "Skill", "Decision record", "Agent", "Estate map", "Profile", "Other file")
+KINDS = ("Rule", "AI use policy", "Permissions", "Note", "Skill", "Decision record", "Agent", "Estate map", "Profile", "Other file")
 _ACTIONS = {"A": "added", "M": "changed", "D": "removed", "T": "changed"}
 _REVISION = re.compile(r"^[0-9a-f]{40,64}$")
 _PERMISSION_FILES = {"protected-paths.json": "protected paths", "ai-tools.json": "approved AI tools"}
@@ -106,6 +106,8 @@ def _classify(path: str) -> tuple[str, str, str]:
     markdown = base.endswith(".md") and base != "README.md"
     if top == "policies" and len(parts) == 3 and markdown:
         return "Rule", base[:-3], path
+    if path == "policies/ai-use.md":
+        return "AI use policy", "", path
     if top == "permissions" and len(parts) == 2 and base in _PERMISSION_FILES:
         return "Permissions", _PERMISSION_FILES[base], path
     if top == "knowledge" and markdown:

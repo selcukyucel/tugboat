@@ -48,6 +48,9 @@ RULE_MODES = frozenset({"advisory", "required"})
 RULE_STATUSES = frozenset({"example", "adopted"})
 DECISION_STATUSES = frozenset({"proposed", "accepted", "superseded"})
 DECISION_HEADINGS = ("Context", "Options", "Choice", "Reason")
+# What the AI use policy must say something about. One heading for each.
+AI_USE_HEADINGS = ("Data that must never enter a prompt", "Accounts", "Accountability")
+AI_USE_MAX = 8000  # one page
 
 _RULE_ID = re.compile(r"^(COM|IOS|AND)-[0-9]{3}$")
 _DECISION_ID = re.compile(r"^DEC-[0-9]{4}$")
@@ -262,6 +265,22 @@ def validate_rule(fields: Mapping[str, Any], body: str) -> dict[str, Any]:
         "mode": require_choice(fields["mode"], "rule mode", RULE_MODES),
         "status": require_choice(fields["status"], "rule status", RULE_STATUSES),
         "text": _body(body, "rule"),
+    }
+
+
+def validate_ai_use(fields: Mapping[str, Any], body: str) -> dict[str, Any]:
+    """policies/ai-use.md: the one page that says how the team uses AI tools."""
+    label = "AI use policy"
+    require_exact_fields(fields, required=frozenset({"title", "status"}), label=label)
+    text = _body(body, label, AI_USE_MAX)
+    headings = {line[3:].strip() for line in text.splitlines() if line.startswith("## ")}
+    missing = [heading for heading in AI_USE_HEADINGS if heading not in headings]
+    if missing:
+        raise DataError(f"{label} is missing sections: {', '.join('## ' + heading for heading in missing)}")
+    return {
+        "title": require_text(fields["title"], f"{label} title", 150),
+        "status": require_choice(fields["status"], f"{label} status", RULE_STATUSES),
+        "text": text,
     }
 
 
