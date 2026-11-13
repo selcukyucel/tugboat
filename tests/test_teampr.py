@@ -110,6 +110,37 @@ class ProposeTests(ProposeCase):
         self.assertEqual(self.remote_branches(), ["main"])
         self.nothing_left_behind()
 
+    def test_two_proposals_in_the_same_second_get_two_branches(self):
+        stamp = mock.Mock(wraps=teampr.datetime)
+        stamp.now.return_value = teampr.datetime(2026, 11, 13, 12, 0, 0, tzinfo=teampr.timezone.utc)
+        with mock.patch.object(teampr, "datetime", stamp):
+            first = self.propose()
+            second = self.propose({"knowledge/auth/other.md": NOTE_TEXT})
+            third = self.propose({"knowledge/auth/third.md": NOTE_TEXT})
+        self.assertEqual((first.branch, second.branch, third.branch), ("tug/add-a-note-on-token-refresh-20261113-120000", "tug/add-a-note-on-token-refresh-20261113-120000-2", "tug/add-a-note-on-token-refresh-20261113-120000-3"))
+        self.assertEqual(self.git(self.remote, "diff", "--name-only", "main", first.branch), "knowledge/auth/tokens.md")
+        self.assertEqual(self.git(self.remote, "diff", "--name-only", "main", second.branch), "knowledge/auth/other.md")
+
+    def test_the_push_never_moves_a_branch_that_is_already_there(self):
+        proposal = self.propose()
+        tip = self.git(self.remote, "rev-parse", proposal.branch)
+        # Merged, so a later proposal descends from this branch and Git alone would let the push through.
+        self.git(self.work, "fetch", "--quiet", "origin", proposal.branch)
+        self.git(self.work, "merge", "--quiet", "--ff-only", "FETCH_HEAD")
+        self.git(self.work, "push", "--quiet", "origin", "HEAD:main")
+        listing = teampr.git
+
+        def blind(*args, **options):
+            # As if another machine made the same branch between the check and the push.
+            return listing(*args[:3], **options) if args[0] == "ls-remote" else listing(*args, **options)
+
+        stamp = mock.Mock(wraps=teampr.datetime)
+        stamp.now.return_value = teampr.datetime.strptime(proposal.branch[-15:], "%Y%m%d-%H%M%S").replace(tzinfo=teampr.timezone.utc)
+        with mock.patch.object(teampr, "datetime", stamp), mock.patch.object(teampr, "git", blind), self.assertRaises(TugError):
+            self.propose({"knowledge/auth/other.md": NOTE_TEXT})
+        self.assertEqual(self.git(self.remote, "rev-parse", proposal.branch), tip)
+        self.nothing_left_behind()
+
     def test_a_problem_that_was_already_on_main_does_not_block_the_fix(self):
         self.push("knowledge/old.md", "no header\n")
         proposal = self.propose({"knowledge/old.md": NOTE_TEXT}, title="Fix the old note")

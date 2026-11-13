@@ -280,7 +280,7 @@ class SyncCommandTests(SyncCase):
     def test_sync_without_an_address_explains_what_is_missing(self):
         code, _, err = run("sync")
         self.assertEqual(code, 1)
-        self.assertIn("pass --team-repo ADDRESS", err)
+        self.assertIn("Run `tug init` inside the app repo first.", err)
 
     def test_sync_refuses_a_bad_address_before_git_sees_it(self):
         code, _, err = run("sync", "--team-repo", "--upload-pack=x")

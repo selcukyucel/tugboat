@@ -7,7 +7,7 @@ from unittest import mock
 
 from tugboat import detect
 from tugboat.address import parse_remote_url
-from tugboat.errors import EXIT_NOT_BUILT, TugError
+from tugboat.errors import TugError
 
 from test_sync import GIT, run
 
@@ -161,20 +161,20 @@ class InitCommandTests(DetectCase):
     def unchanged(self, root):
         return self.git(root, "status", "--porcelain") == "" and not (root / ".tugboat").exists() and not (root / ".claude").exists()
 
-    def test_yes_shows_what_was_found_and_says_the_rest_is_not_built(self):
+    def test_yes_shows_what_was_found_and_then_needs_the_team_repo(self):
         root = self.repo("ios", IOS_FILES)
         code, out, err = self.init(root, "--yes")
-        self.assertEqual((code, err), (EXIT_NOT_BUILT, ""))
+        self.assertEqual(code, 1)
         self.assertIn("Tugboat found this:", out)
         self.assertIn("Default branch:  main", out)
-        self.assertIn("Nothing was changed.", out)
+        self.assertIn("init needs the address of the team repo. Pass --team-repo ADDRESS. Nothing was changed in this repo.", err)
         self.assertTrue(self.unchanged(root))
 
-    def test_a_person_confirms_or_declines(self):
+    def test_a_person_who_declines_what_was_found_stops_init(self):
         root = self.repo("ios", IOS_FILES)
-        self.assertEqual(self.init(root, tty=True, answer="y")[0], EXIT_NOT_BUILT)
         code, _, err = self.init(root, tty=True, answer="")
-        self.assertEqual((code, err), (1, "tug: stopped. Nothing was changed.\n"))
+        self.assertEqual((code, err), (1, "tug: stopped. Nothing was changed in this repo.\n"))
+        self.assertTrue(self.unchanged(root))
 
     def test_without_a_terminal_and_without_yes_it_stops(self):
         code, _, err = self.init(self.repo("ios", IOS_FILES))

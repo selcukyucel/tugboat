@@ -8,7 +8,7 @@ It runs beside Claude Code, GitHub Copilot CLI, and GitHub Copilot in VS Code. I
 
 ## Status
 
-Early. This version can start and check a team repo, keep a local clone of it up to date, keep a read-only copy of its content inside an app repo, and generate the files the agent tools load. It syncs at the start of each agent session. It does not yet check or block anything the agent does.
+Early. This version can start and check a team repo, set up an app repo with `tug init`, save the project's choices in the team repo, keep a read-only copy of the team content inside the app repo, and generate the files the agent tools load. It syncs at the start of each agent session. It does not yet check or block anything the agent does.
 A command that is not written yet is listed and answers "not built yet". Nothing here is ready for daily use.
 
 ## Requirements
@@ -22,7 +22,7 @@ Tugboat uses only the Python standard library. It has no third-party package at 
 ## Install
 
 ```sh
-uv tool install git+https://github.com/selcukyucel/tugboat@v0.7.0
+uv tool install git+https://github.com/selcukyucel/tugboat@v0.8.0
 tug version
 ```
 
@@ -38,8 +38,8 @@ To remove the command: `uv tool uninstall tugboat`.
 | `tug team new <folder>` | Writes the starter layout of a team repo into an empty folder | Works |
 | `tug team check [folder]` | Checks every file Tugboat reads in a team repo | Works |
 | `tug team propose` | Proposes a change to the team repo as a pull request | Works |
-| `tug init` | Sets up the app repo it is run in | Partly. It detects the repo, asks you to confirm, and stops. It changes nothing yet. |
-| `tug sync` | Brings the team repo clone, an app repo's copy of it, and the agent tool files up to date | Works. The first run needs `--team-repo` and `--app-repo`. |
+| `tug init` | Sets up the app repo it is run in | Works. The CI workflows and the first-session step for acceptance criteria are not built yet. |
+| `tug sync` | Brings the team repo clone, an app repo's copy of it, and the agent tool files up to date | Works |
 | `tug status` | Prints the session brief | Not built yet |
 | `tug doctor` | Checks that this machine and repo are ready | Not built yet |
 | `tug update` | Updates `tug` to the newest release | Not built yet |
@@ -84,34 +84,78 @@ It pushes a branch named `tug/...` with the files, and opens the pull request wi
 - A change that would fail `tug team check` is refused before anything is pushed. A problem that was already on `main` does not block a fix.
 - `--remove PATH` removes a file. `--file` and `--remove` can be given more than once.
 - Git must know your name and email. Tugboat does not let Git make one up from the machine's name.
+- The push can only create the new branch. It never moves a branch that is already in GitHub.
 
 ## Init
 
-Run `tug init` inside an existing app repo. It asks nothing about the repo. It reads:
+Run `tug init` inside an existing app repo. It does five things, in this order. Everything that can stop it happens before anything is written into the repo.
+
+**1. It detects the repo.** It asks nothing about it. It reads:
 
 - the GitHub address, from the remote called `origin`
 - the default branch, from the clone's own record of the remote, or from GitHub when the clone has none
 - the platform: iOS when the repo has an Xcode project or workspace, Android when it has Gradle files of an Android project
 
-It shows what it found and asks you to confirm. `--yes` skips the question.
+It shows what it found and asks you to confirm.
 
-It stops with the reason, and changes nothing, when:
+**2. It asks for the address of the team repo**, and brings its clone up to date. The team repo must exist: init creates nothing in GitHub. When this machine already has exactly one team repo, that one is offered.
+
+**3. It reads the project profile.** The profile is `profile.json` in the team repo. It holds the project's choices and the list of its app repos.
+
+- The first init for a project asks the project questions: the project's name, the tracker (Jira or GitHub Projects), the optional CI checks (any, or none), the agent tools the team uses, and who approves a change to the team repo (a teammate, or the owner of a solo project).
+- A later init, in another repo or on another machine, asks none of them. It reads the saved profile.
+- `tug init --change` asks the questions again, with the saved answers as the defaults. An option such as `--tracker jira` changes one choice without a question.
+
+**4. It proposes the profile as a pull request in the team repo.** A new profile, a changed choice, and a newly added app repo each go to `main` through a pull request that a person merges. Init shows the change and asks before it opens the pull request.
+
+- Until the pull request is merged, Tugboat works from its own copy of the proposed profile on this machine. The copy is dropped as soon as `main` holds the same profile.
+- When `main` gets a different profile in the meantime, the approved profile wins and the local copy is set aside.
+- Merge the first profile pull request before the next person runs init. Otherwise that person is asked the project questions too, and two pull requests propose two profiles.
+- When the pull request was closed without a merge, `tug init --propose-again` opens a new one.
+- When the pull request cannot be made, for example offline, the repo is still set up and init exits with `1`. Run `tug init` again to propose.
+
+**5. It sets up the repo**: the read-only copy of the team content at `.tugboat/team/` and the agent tool files under `.claude/`. See Sync below. A second run with nothing new changes no file and opens no pull request.
+
+Without a terminal, give the answers as options:
+
+```sh
+tug init --yes --team-repo git@github.com:owner/name.git \
+  --tracker github-projects --approval owner --ci none --surfaces claude-code,copilot-cli
+```
+
+| Option | Meaning |
+|---|---|
+| `--yes` | Answers yes to every confirmation and asks no question. At the first init, `--tracker` and `--approval` must then be given: they have no default. |
+| `--team-repo ADDRESS` | The team repo. Not needed in a repo that is already set up. |
+| `--platform ios` or `android` | Only for a repo that holds both an iOS and an Android project |
+| `--project NAME` | The project's name, at the first init. The default comes from the team repo's name. |
+| `--tracker`, `--ci`, `--surfaces`, `--approval` | The project's choices. `--ci` and `--surfaces` take a list separated by commas. `--ci none` selects no CI check. |
+| `--change` | Ask the project questions again |
+| `--propose-again` | Open a new pull request for a profile change that waits |
+
+Init stops with the reason, and changes nothing in the repo, when:
 
 - the folder is not inside a Git repo, or is a team repo
 - the repo has no remote, or the remote is not a GitHub address
 - no iOS or Android project is found. Gradle files alone do not count: a backend can use Gradle too.
 - the repo holds both an iOS and an Android project. Then run it with `--platform ios` or `--platform android`.
+- the team repo is missing or cannot be reached, is not a Tugboat team repo, is on another GitHub host, or is the app repo itself
+- the profile in the team repo is not valid
+- you decline a confirmation
 
 Projects under `Pods/`, `Carthage/`, `node_modules/`, and similar folders are not counted. A token inside a remote URL is never shown or saved.
 
-The steps after detection are not built yet: choosing the team repo and the project's settings.
+A tool that is older than the profile's minimum tool version still sets up the repo. It proposes no profile change until it is updated.
+
+Not built yet: the workflows of the CI checks (the choice is saved), and the step in the first agent session that finds where acceptance criteria are kept.
 
 ## Sync
 
 ```sh
-tug sync --team-repo git@github.com:owner/name.git --app-repo path/to/app   # the first time
-tug sync                                                                     # after that, inside the app repo
+tug sync
 ```
+
+Run it inside an app repo that `tug init` set up. It also runs by itself at the start of each agent session.
 
 Sync does three things.
 
@@ -147,7 +191,7 @@ Sync does three things.
 
 At the start of a session the hook runs a sync and hands its report to the agent. A sync that fails is reported in one line and the session goes on. Outside a repo that Tugboat was set up in, the hook does nothing.
 
-The two options are a stopgap until `tug init` exists.
+`tug sync --team-repo ADDRESS` brings only the clone of one team repo up to date, from any folder. `--app-repo FOLDER` names an app repo when the command is run from somewhere else.
 
 ## Development
 

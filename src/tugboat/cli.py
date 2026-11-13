@@ -34,24 +34,53 @@ def _version(_args: argparse.Namespace) -> int:
 
 
 def _configure_init(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--yes", action="store_true", help="accept what was detected without being asked")
+    from tugboat import profile
+
+    def values(table: object) -> str:
+        return ", ".join(value for value, _ in table)  # type: ignore[union-attr]
+
+    parser.add_argument("--yes", action="store_true", help="answer yes to every confirmation, and ask no question. A choice with no default must then be given as an option.")
     parser.add_argument("--platform", choices=("ios", "android"), help="only for a repo that holds both an iOS and an Android project")
+    parser.add_argument("--team-repo", metavar="ADDRESS", help="the team repo, as git@github.com:owner/name.git or https://github.com/owner/name.git. Asked for when not given.")
+    project = parser.add_argument_group("the project's choices", "Asked at the first init for a project, and saved in the team repo. On a later init, an option changes that choice.")
+    project.add_argument("--project", metavar="NAME", help="the project's name, in lowercase. Only at the first init.")
+    project.add_argument("--tracker", choices=[value for value, _ in profile.TRACKERS], help="where the stories come from")
+    project.add_argument("--ci", metavar="LIST", help=f"the optional CI checks, separated by commas, or 'none': {values(profile.CI_FEATURES)}")
+    project.add_argument("--surfaces", metavar="LIST", help=f"the agent tools the team uses, separated by commas: {values(profile.SURFACES)}")
+    project.add_argument("--approval", choices=[value for value, _ in profile.APPROVAL_MODES], help="who approves a change to the team repo: a teammate, or the owner of a solo project")
+    project.add_argument("--change", action="store_true", help="ask the project questions again, to change a choice")
+    project.add_argument("--propose-again", action="store_true", help="open a new pull request for a profile change whose pull request was closed without a merge")
+
+
+def _list_option(text: str | None, table: object, option: str, *, none_allowed: bool) -> list[str] | None:
+    if text is None:
+        return None
+    allowed = [value for value, _ in table]  # type: ignore[union-attr]
+    parts = [part.strip() for part in text.split(",") if part.strip()]
+    if none_allowed and parts == ["none"]:
+        return []
+    unknown = [part for part in parts if part not in allowed]
+    if unknown or not parts or len(set(parts)) != len(parts):
+        raise TugError(f"{option} must be a list of these, separated by commas{', or none' if none_allowed else ''}: {', '.join(allowed)}")
+    return parts
 
 
 def _init(args: argparse.Namespace) -> int:
-    from tugboat import detect
+    from tugboat import initrepo, profile
 
-    found = detect.detect(".", platform=args.platform)
-    print("Tugboat found this:")
-    print(detect.render(found))
-    if not args.yes:
-        if not sys.stdin.isatty():
-            raise TugError("init needs a person to confirm what it found. Run it in a terminal, or pass --yes. Nothing was changed.")
-        answer = input("Is this right? [y/N] ").strip().lower()
-        if answer not in {"y", "yes"}:
-            raise TugError("stopped. Nothing was changed.")
-    print("Confirmed. The next steps of init are not built yet: the team repo and the project's choices. Nothing was changed.")
-    return EXIT_NOT_BUILT
+    options = initrepo.Options(
+        yes=args.yes,
+        platform=args.platform,
+        team_repo=args.team_repo,
+        project=args.project,
+        tracker=args.tracker,
+        ci=_list_option(args.ci, profile.CI_FEATURES, "--ci", none_allowed=True),
+        surfaces=_list_option(args.surfaces, profile.SURFACES, "--surfaces", none_allowed=False),
+        approval=args.approval,
+        change=args.change,
+        propose_again=args.propose_again,
+    )
+    return initrepo.run(".", options)
 
 
 def _configure_team(parser: argparse.ArgumentParser) -> None:
@@ -113,13 +142,12 @@ def _configure_sync(parser: argparse.ArgumentParser) -> None:
         "--team-repo",
         metavar="ADDRESS",
         help="the team repo, as git@github.com:owner/name.git or https://github.com/owner/name.git. "
-        "Needed the first time, until `tug init` can record it.",
+        "Only needed outside an app repo that `tug init` set up.",
     )
     parser.add_argument(
         "--app-repo",
         metavar="FOLDER",
-        help="an app repo to keep a read-only copy of the team content in. "
-        "Not needed inside an app repo that already has a copy.",
+        help="an app repo to bring up to date, when the command is run from somewhere else",
     )
     parser.add_argument("--force", action="store_true", help="rewrite the copy even when nothing changed")
 
@@ -155,7 +183,7 @@ def _sync(args: argparse.Namespace) -> int:
         except DataError as error:
             raise TugError(f"the team repo address saved in this repo is not valid: {recorded}") from error
     else:
-        raise TugError("this folder is not set up yet, and `tug init` is not built. Until then, pass --team-repo ADDRESS.")
+        raise TugError("this folder is not set up with Tugboat. Run `tug init` inside the app repo first.")
 
     if repo is None:
         report = sync.sync_team_repo(address)
@@ -230,7 +258,7 @@ def _team_propose(args: argparse.Namespace) -> int:
 
 COMMANDS: tuple[Command, ...] = (
     Command("version", "Print the installed version", _version),
-    Command("init", "Set up the app repo it is run in. So far it detects the repo and stops.", _init, _configure_init),
+    Command("init", "Set up the app repo it is run in", _init, _configure_init),
     Command("sync", "Bring the team repo clone, this repo's copy, and the agent tool files up to date", _sync, _configure_sync),
     Command("status", "Print the session brief"),
     Command("doctor", "Check that this machine and repo are ready"),

@@ -30,3 +30,8 @@ def sync_state_file(address: TeamRepoAddress) -> Path:
 
 def sync_lock_file(address: TeamRepoAddress) -> Path:
     return _sync_file(address, ".lock")
+
+
+def pending_profile_file(address: TeamRepoAddress) -> Path:
+    """A profile change this machine proposed for one team repo and that is not merged yet."""
+    return tug_home() / "pending" / address.host / address.owner / (address.name + ".profile.json")

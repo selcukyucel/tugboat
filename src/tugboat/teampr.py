@@ -118,13 +118,20 @@ def propose(
         raise TugError(f"the team repo could not be reached, so nothing was proposed ({report.error})")
     clone = paths.team_repo_clone(address)
     base = teamcopy.approved_revision(clone)
-    try:
-        git("ls-remote", "--exit-code", "origin", f"refs/heads/{sync.BRANCH}", cwd=clone, timeout=sync.FETCH_TIMEOUT)
-    except GitError as error:
-        raise TugError(f"the team repo could not be reached, so nothing was proposed ({error.reason})") from error
-
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
     branch = f"{BRANCH_PREFIX}{slugify(name or title)}-{stamp}"
+    try:
+        listed = git("ls-remote", "origin", f"refs/heads/{sync.BRANCH}", f"refs/heads/{branch}*", cwd=clone, timeout=sync.FETCH_TIMEOUT)
+    except GitError as error:
+        raise TugError(f"the team repo could not be reached, so nothing was proposed ({error.reason})") from error
+    taken = {line.split("\t", 1)[1] for line in listed.splitlines() if "\t" in line}
+    if f"refs/heads/{sync.BRANCH}" not in taken:
+        raise TugError(f"the team repo has no '{sync.BRANCH}' branch, so nothing was proposed")
+    # Two proposals in the same second must not share a branch.
+    stem, count = branch, 1
+    while f"refs/heads/{branch}" in taken:
+        count += 1
+        branch = f"{stem}-{count}"
     work = paths.tug_home() / "work"
     work.mkdir(parents=True, exist_ok=True)
     holder = Path(tempfile.mkdtemp(dir=work, prefix="proposal-"))
@@ -161,8 +168,9 @@ def propose(
                 raise TugError("Git does not know your name and email, so it cannot commit. Set them with `git config --global user.name` and `user.email`.") from error
             raise
         commit = git("rev-parse", "HEAD", cwd=tree)
-        # The full names of both ends, so this can only ever create the proposal branch.
-        git("push", "--quiet", "origin", f"refs/heads/{branch}:refs/heads/{branch}", cwd=tree, timeout=PUSH_TIMEOUT)
+        # The full names of both ends, and a lease that expects no such branch:
+        # this can only ever create the proposal branch, never move an existing one.
+        git("push", "--quiet", f"--force-with-lease=refs/heads/{branch}:", "origin", f"refs/heads/{branch}:refs/heads/{branch}", cwd=tree, timeout=PUSH_TIMEOUT)
     finally:
         try:
             if tree.exists():
