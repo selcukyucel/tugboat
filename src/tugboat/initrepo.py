@@ -155,6 +155,7 @@ def _first_profile(address: TeamRepoAddress, options: Options) -> dict[str, Any]
         ci = options.ci if options.ci is not None else []
         surfaces = options.surfaces if options.surfaces is not None else [value for value, _ in profile.SURFACES]
     else:
+        print()
         print("This is the first init for this project. A few questions follow. The answers are saved in the team repo,")
         print("so nobody on the project is asked again. Each one can be changed later with `tug init --change`.")
         project = options.project or prompts.text(
@@ -222,10 +223,10 @@ def run(start: str | os.PathLike[str], options: Options) -> int:
     if working.note:
         print(working.note)
     current = working.profile
-    print()
     if current is None:
         proposed = _first_profile(address, options)
     else:
+        print()
         if working.pending is None:
             print("Project profile, approved in the team repo:")
         else:

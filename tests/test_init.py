@@ -144,6 +144,7 @@ class FirstInitTests(InitCase):
         self.assertEqual((found["project"], found["tracker"]["kind"], found["approval_mode"], found["surfaces"]), ("shop", "jira", "teammate", ["copilot-cli"]))
         self.assertEqual(found["ci_features"], ["secret-scan", "guardrail-pack", "dependency-verification"])
         self.assertIn("Their workflows are not built yet.", out)
+        self.assertNotIn("\n\n\n", out)
 
     def test_each_ci_feature_alone_and_none_give_a_valid_profile(self):
         for features in ([], *([value] for value, _ in profile.CI_FEATURES)):
