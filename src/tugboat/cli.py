@@ -7,6 +7,7 @@ written yet says so and exits with its own code. It never pretends to work.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import os
 import sys
 import traceback
@@ -75,18 +76,55 @@ def _configure_sync(parser: argparse.ArgumentParser) -> None:
         "--team-repo",
         metavar="ADDRESS",
         help="the team repo, as git@github.com:owner/name.git or https://github.com/owner/name.git. "
-        "Needed until `tug init` can record it for an app repo.",
+        "Needed the first time, until `tug init` can record it.",
     )
+    parser.add_argument(
+        "--app-repo",
+        metavar="FOLDER",
+        help="an app repo to keep a read-only copy of the team content in. "
+        "Not needed inside an app repo that already has a copy.",
+    )
+    parser.add_argument("--force", action="store_true", help="rewrite the copy even when nothing changed")
 
 
 def _sync(args: argparse.Namespace) -> int:
-    from tugboat import sync
-    from tugboat.address import parse_team_repo_address
+    from pathlib import Path
 
-    if not args.team_repo:
+    from tugboat import apprepo, sync, teamcopy
+    from tugboat.address import parse_team_repo_address
+    from tugboat.errors import DataError
+
+    repo: Path | None = None
+    recorded: str | None = None
+    if args.app_repo:
+        repo = apprepo.find_app_repo(args.app_repo)
+    else:
+        # Inside an app repo that already has a copy, no option is needed.
+        with contextlib.suppress(TugError):
+            found = apprepo.find_app_repo(".")
+            if teamcopy.read_state(found) is not None:
+                repo = found
+    if repo is not None:
+        state = teamcopy.read_state(repo)
+        recorded = state["team_repo"] if state else None
+
+    if args.team_repo:
+        address = parse_team_repo_address(args.team_repo)
+        if recorded and recorded != address.url:
+            raise TugError(f"this repo is set up for the team repo {recorded}. It was left as it is.")
+    elif recorded:
+        try:
+            address = parse_team_repo_address(recorded)
+        except DataError as error:
+            raise TugError(f"the team repo address saved in this repo is not valid: {recorded}") from error
+    else:
         raise TugError("this folder is not set up yet, and `tug init` is not built. Until then, pass --team-repo ADDRESS.")
-    report = sync.sync_team_repo(parse_team_repo_address(args.team_repo))
+
+    report = sync.sync_team_repo(address)
     print(sync.render(report))
+    if repo is not None and report.usable:
+        # The copy needs no network. It is taken from what the last working sync fetched.
+        print(teamcopy.render(teamcopy.refresh_copy(repo, address, force=args.force), repo))
     # A sync that did not work still lets work go on, as long as there is a clone to work from.
     return EXIT_OK if report.usable else EXIT_ERROR
 
@@ -94,7 +132,7 @@ def _sync(args: argparse.Namespace) -> int:
 COMMANDS: tuple[Command, ...] = (
     Command("version", "Print the installed version", _version),
     Command("init", "Set up the app repo it is run in"),
-    Command("sync", "Bring the local clone of the team repo up to date", _sync, _configure_sync),
+    Command("sync", "Bring the team repo clone, and this repo's copy of it, up to date", _sync, _configure_sync),
     Command("status", "Print the session brief"),
     Command("doctor", "Check that this machine and repo are ready"),
     Command("update", "Update tug to the newest release"),

@@ -8,7 +8,7 @@ It runs beside Claude Code, GitHub Copilot CLI, and GitHub Copilot in VS Code. I
 
 ## Status
 
-Early. This version can start and check a team repo, and keep a local clone of it up to date. It cannot yet set up an app repo.
+Early. This version can start and check a team repo, keep a local clone of it up to date, and keep a read-only copy of its content inside an app repo. It cannot yet generate the files the agent tools load.
 A command that is not written yet is listed and answers "not built yet". Nothing here is ready for daily use.
 
 ## Requirements
@@ -22,7 +22,7 @@ Tugboat uses only the Python standard library. It has no third-party package at 
 ## Install
 
 ```sh
-uv tool install git+https://github.com/selcukyucel/tugboat@v0.3.0
+uv tool install git+https://github.com/selcukyucel/tugboat@v0.4.0
 tug version
 ```
 
@@ -38,7 +38,7 @@ To remove the command: `uv tool uninstall tugboat`.
 | `tug team new <folder>` | Writes the starter layout of a team repo into an empty folder | Works |
 | `tug team check [folder]` | Checks every file Tugboat reads in a team repo | Works |
 | `tug init` | Sets up the app repo it is run in | Not built yet |
-| `tug sync --team-repo <address>` | Brings the local clone of the team repo up to date | Works. It does not yet refresh an app repo. |
+| `tug sync` | Brings the team repo clone, and an app repo's copy of it, up to date | Works. The first run needs `--team-repo` and `--app-repo`. |
 | `tug status` | Prints the session brief | Not built yet |
 | `tug doctor` | Checks that this machine and repo are ready | Not built yet |
 | `tug update` | Updates `tug` to the newest release | Not built yet |
@@ -66,15 +66,29 @@ Structured files are JSON. Rules, notes, decision records, and agent definitions
 
 ## Sync
 
-`tug sync --team-repo git@github.com:owner/name.git` clones the team repo the first time and moves the clone forward after that.
-The clone lives at `~/.tugboat/team-repos/<host>/<owner>/<name>`.
+```sh
+tug sync --team-repo git@github.com:owner/name.git --app-repo path/to/app   # the first time
+tug sync                                                                     # after that, inside the app repo
+```
+
+Sync does two things.
+
+**It keeps a clone of the team repo** at `~/.tugboat/team-repos/<host>/<owner>/<name>`.
 
 - A sync that fails does not stop work. It says why, and gives the time of the last sync that worked.
 - The clone only moves forward to what GitHub has. Nothing is merged, rebased, or reset.
 - Local edits in the clone are never discarded. They are reported.
 - Git is never allowed to wait for a password or a prompt, because sync will run where nobody can answer.
 
-The `--team-repo` option is needed until `tug init` can record the address for an app repo.
+**It keeps a read-only copy of the team content inside the app repo**, at `.tugboat/team/`. The agent reads team content from there, so no agent tool has to read outside its workspace.
+
+- The copy holds the last approved revision that sync fetched. A local edit or a local commit in the clone never reaches it.
+- It is rewritten only when the team repo revision or the tool version changed. Otherwise no file is touched.
+- The files are read-only. To change a rule or a note, open a pull request in the team repo.
+- Git ignores `.tugboat/`. Tugboat adds it to the repo's local exclude file and touches no tracked file.
+- Links in the team repo are not copied.
+
+The two options are a stopgap until `tug init` exists.
 
 ## Development
 
