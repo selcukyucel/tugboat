@@ -1,0 +1,45 @@
+{
+  "schema": "tug.protected-paths/1",
+  "paths": [
+    {
+      "pattern": ".github/workflows/**",
+      "platform": "any",
+      "reason": "CI workflows decide what runs with the project's secrets."
+    },
+    {
+      "pattern": "**/*.mobileprovision",
+      "platform": "ios",
+      "reason": "Provisioning profiles control app signing."
+    },
+    {
+      "pattern": "**/*.p12",
+      "platform": "ios",
+      "reason": "Signing certificates must not be changed by an agent."
+    },
+    {
+      "pattern": "**/ExportOptions.plist",
+      "platform": "ios",
+      "reason": "Export options control how a build is signed and distributed."
+    },
+    {
+      "pattern": "fastlane/**",
+      "platform": "any",
+      "reason": "Release automation controls signing and store uploads."
+    },
+    {
+      "pattern": "**/*.jks",
+      "platform": "android",
+      "reason": "Keystores hold the app signing keys."
+    },
+    {
+      "pattern": "**/*.keystore",
+      "platform": "android",
+      "reason": "Keystores hold the app signing keys."
+    },
+    {
+      "pattern": "**/keystore.properties",
+      "platform": "android",
+      "reason": "This file points to the signing keys and their passwords."
+    }
+  ]
+}

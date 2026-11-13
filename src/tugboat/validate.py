@@ -112,3 +112,61 @@ def canonical_timestamp(value: object, label: str) -> str:
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+_DATE = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")
+_REPO = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})/[A-Za-z0-9._-]{1,100}$")
+
+
+def require_list(value: object, label: str, *, maximum: int, minimum: int = 0) -> list[Any]:
+    if not isinstance(value, list):
+        raise DataError(f"{label} must be a list")
+    if not minimum <= len(value) <= maximum:
+        raise DataError(f"{label} must have between {minimum} and {maximum} items")
+    return value
+
+
+def require_unique(values: list[str], label: str) -> list[str]:
+    seen: set[str] = set()
+    for value in values:
+        if value in seen:
+            raise DataError(f"{label} lists '{value}' more than once")
+        seen.add(value)
+    return values
+
+
+def validate_date(value: object, label: str) -> str:
+    """A calendar date written as YYYY-MM-DD."""
+    text = require_text(value, label, 10)
+    if not _DATE.fullmatch(text):
+        raise DataError(f"{label} must be a date like 2026-11-13")
+    try:
+        datetime.strptime(text, "%Y-%m-%d")
+    except ValueError as error:
+        raise DataError(f"{label} is not a real date") from error
+    return text
+
+
+def validate_repo_ref(value: object, label: str) -> str:
+    """A GitHub repository written as owner/name."""
+    text = require_text(value, label, 140)
+    if not _REPO.fullmatch(text) or text.endswith(".git"):
+        raise DataError(f"{label} must be a GitHub repository written as owner/name")
+    return text
+
+
+def validate_glob(value: object, label: str) -> str:
+    """A path pattern inside a repo.
+
+    `*` matches within one path part, `?` matches one character, and `**` as a
+    whole part matches any number of parts. Nothing else is special.
+    """
+    text = require_text(value, label, 300)
+    if "\\" in text:
+        raise DataError(f"{label} must use forward slashes")
+    parts = text.split("/")
+    if any(part in {"", ".", ".."} for part in parts):
+        raise DataError(f"{label} must be a relative pattern with no empty, '.' or '..' parts")
+    if any("**" in part and part != "**" for part in parts):
+        raise DataError(f"{label} may use '**' only as a whole path part")
+    return text

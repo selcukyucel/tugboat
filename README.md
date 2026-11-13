@@ -8,8 +8,8 @@ It runs beside Claude Code, GitHub Copilot CLI, and GitHub Copilot in VS Code. I
 
 ## Status
 
-Early. This version is the skeleton: the `tug` command exists and `tug version` works.
-Every other command is listed and answers "not built yet". Nothing here is ready for daily use.
+Early. This version can start and check a team repo. It cannot yet set up an app repo or sync.
+A command that is not written yet is listed and answers "not built yet". Nothing here is ready for daily use.
 
 ## Requirements
 
@@ -22,7 +22,7 @@ Tugboat uses only the Python standard library. It has no third-party package at 
 ## Install
 
 ```sh
-uv tool install git+https://github.com/selcukyucel/tugboat@v0.1.0
+uv tool install git+https://github.com/selcukyucel/tugboat@v0.2.0
 tug version
 ```
 
@@ -35,6 +35,8 @@ To remove the command: `uv tool uninstall tugboat`.
 | Command | Does | State |
 |---|---|---|
 | `tug version` | Prints the installed version | Works |
+| `tug team new <folder>` | Writes the starter layout of a team repo into an empty folder | Works |
+| `tug team check [folder]` | Checks every file Tugboat reads in a team repo | Works |
 | `tug init` | Sets up the app repo it is run in | Not built yet |
 | `tug sync` | Pulls the team repo and refreshes the local files | Not built yet |
 | `tug status` | Prints the session brief | Not built yet |
@@ -45,6 +47,22 @@ To remove the command: `uv tool uninstall tugboat`.
 | `tug hook` | Called by the agent tool's hooks | Not built yet |
 
 Exit codes: `0` success, `1` error, `2` usage error (agent tools read `2` from a hook as "deny"), `3` command not built yet.
+
+## The team repo
+
+Each project keeps its rules, permissions, knowledge, and decisions in one team repo of its own. Tugboat ships with none.
+
+To start one:
+
+1. Create an empty repo in GitHub and clone it.
+2. Run `tug team new <the clone>`. It writes the starter layout. It commits nothing, pushes nothing, and creates nothing in GitHub.
+3. Review the files, commit, and push.
+4. In GitHub, protect `main` so that it changes only through a pull request.
+
+The starter layout explains itself: its `README.md` gives the layout, and each folder's README gives that folder's file format.
+Structured files are JSON. Rules, notes, decision records, and agent definitions are Markdown files with a small header.
+
+`tug team check` checks all of them and prints one line per problem. It exits with `1` when a file is not valid. The starter layout runs the same check on every pull request.
 
 ## Development
 

@@ -1,0 +1,30 @@
+{
+  "schema": "tug.ai-tools/1",
+  "agent_tools": [
+    {
+      "id": "claude-code",
+      "name": "Claude Code"
+    },
+    {
+      "id": "copilot-cli",
+      "name": "GitHub Copilot CLI"
+    },
+    {
+      "id": "copilot-vscode",
+      "name": "GitHub Copilot in VS Code"
+    }
+  ],
+  "models": [],
+  "mcp_servers": [
+    {
+      "id": "github",
+      "name": "GitHub MCP server",
+      "note": "Pull requests, checks, and GitHub Projects."
+    },
+    {
+      "id": "atlassian",
+      "name": "Atlassian MCP server",
+      "note": "Jira stories. Remove it if the project does not use Jira."
+    }
+  ]
+}

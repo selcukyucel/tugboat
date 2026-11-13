@@ -1,0 +1,17 @@
+name: Team repo check
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check the team repo files
+        run: pipx run --spec git+https://github.com/selcukyucel/tugboat@{{TUG_TAG}} tug team check .

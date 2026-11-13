@@ -89,6 +89,14 @@ def canonical_json(value: Any) -> str:
         raise DataError("value must contain only finite JSON data") from error
 
 
+def inline_json(value: Any) -> str:
+    """One line that people read: keeps the given order and non-ASCII letters."""
+    try:
+        return json.dumps(value, ensure_ascii=False, allow_nan=False)
+    except (TypeError, ValueError) as error:
+        raise DataError("value must contain only finite JSON data") from error
+
+
 def pretty_json(value: Any) -> str:
     """The form written to files that people read: sorted keys, two spaces."""
     try:
