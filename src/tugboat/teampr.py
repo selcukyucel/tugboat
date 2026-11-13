@@ -69,6 +69,22 @@ def _errors(folder: Path) -> set[tuple[str, str]]:
     return {(problem.path, problem.message) for problem in team_repo.check_team_repo(folder).errors}
 
 
+def _require_accepted_tool(clone: Path) -> None:
+    """A tool older than the project accepts opens no pull request."""
+    # Imported here, because the profile module itself proposes through this one.
+    from tugboat import profile
+
+    try:
+        approved = profile.approved(clone)
+    except TugError:
+        return  # A profile that cannot be read must not block the pull request that repairs it.
+    if profile.below_minimum(approved):
+        raise TugError(
+            f"this project needs tug {approved['minimum_tool_version']} or newer, and this is {installed_version()}. "
+            "Update it with `tug update`. Nothing was proposed."
+        )
+
+
 def _open_with_gh(address: TeamRepoAddress, branch: str, title: str, body: str, gh: str) -> str:
     env_host = {} if address.host == "github.com" else {"GH_HOST": address.host}
     previous = {key: os.environ.get(key) for key in ("GH_PROMPT_DISABLED", "NO_COLOR", *env_host)}
@@ -118,6 +134,7 @@ def propose(
         raise TugError(f"the team repo could not be reached, so nothing was proposed ({report.error})")
     clone = paths.team_repo_clone(address)
     base = teamcopy.approved_revision(clone)
+    _require_accepted_tool(clone)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
     branch = f"{BRANCH_PREFIX}{slugify(name or title)}-{stamp}"
     try:

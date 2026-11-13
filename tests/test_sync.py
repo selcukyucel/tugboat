@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from unittest import mock
 
-from tugboat import cli, gitrun, paths, sync
+from tugboat import cli, gitrun, paths, releases, sync
 from tugboat.address import TeamRepoAddress, parse_team_repo_address
 from tugboat.errors import DataError
 
@@ -80,6 +80,10 @@ class SyncCase(unittest.TestCase):
         )
         env.start()
         self.addCleanup(env.stop)
+        # No test asks GitHub for the tool's releases. This stand-in does not exist, so a lookup fails at once.
+        tool_repo = mock.patch.object(releases, "TOOL_REPO", os.fspath(self.tmp / "tool.git"))
+        tool_repo.start()
+        self.addCleanup(tool_repo.stop)
         self.remote = self.tmp / "remote.git"
         self.work = self.tmp / "work"
         self.git(self.tmp, "init", "--quiet", "--bare", "-b", "main", os.fspath(self.remote))

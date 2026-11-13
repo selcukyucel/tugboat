@@ -209,6 +209,16 @@ def _hook(args: argparse.Namespace) -> int:
     return hook.main(args.event)
 
 
+def _configure_update(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--check", action="store_true", help="only say whether a newer release exists. Install nothing.")
+
+
+def _update(args: argparse.Namespace) -> int:
+    from tugboat import update
+
+    return update.run(check_only=args.check)
+
+
 def _team_repo_of(option: str | None):  # noqa: ANN202 - the address type is imported late
     """The team repo a command works on: the one given, or the one this app repo is set up for."""
     from tugboat import apprepo, teamcopy
@@ -351,7 +361,7 @@ COMMANDS: tuple[Command, ...] = (
     Command("profile", "Show the project profile, or save where acceptance criteria are kept: `tug profile show`, `set-criteria`", _profile, _configure_profile),
     Command("status", "Print the session brief"),
     Command("doctor", "Check that this machine and repo are ready"),
-    Command("update", "Update tug to the newest release"),
+    Command("update", "Update tug to the newest release", _update, _configure_update),
     Command("expire", "Remove records older than six months, after confirmation"),
     Command("remove", "Take Tugboat out of this repo, or out of every repo on this machine"),
     Command("team", "Start, check, or propose a change to a team repo: `tug team new`, `check`, `propose`", _team, _configure_team),

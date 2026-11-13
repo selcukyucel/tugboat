@@ -22,13 +22,35 @@ Tugboat uses only the Python standard library. It has no third-party package at 
 ## Install
 
 ```sh
-uv tool install git+https://github.com/selcukyucel/tugboat@v0.10.0
+uv tool install git+https://github.com/selcukyucel/tugboat@v0.11.0
 tug version
 ```
 
 Always install from this full address. Tugboat is not published to the Python package index. A package there with the same name is not this tool.
 
 To remove the command: `uv tool uninstall tugboat`.
+
+## Update
+
+```sh
+tug update           # install the newest release
+tug update --check   # only say whether a newer release exists
+```
+
+Tugboat never updates itself. It updates when you run `tug update`.
+
+- It reads the release tags of this repo, takes the newest one, and runs the same uv install as above at that tag.
+- It installs only a tagged release from this repo. The address is fixed inside the tool. No file, option, or environment variable can point it elsewhere.
+- A tag counts as a release only when it is exactly `v` and three numbers, such as `v1.2.3`.
+- It refuses to touch a `tug` that uv did not install as a tool, such as one run from a source checkout. It prints the uv command instead.
+- After an update, the next sync in each repo regenerates the agent tool files.
+
+**You are told when you are behind.** Two lines can appear in the sync report, and so at the start of each agent session:
+
+- `This project needs tug 1.4.0 or newer ...` is the first line when your tool is older than the project's minimum tool version. The minimum is in the approved project profile and changes only through a pull request in the team repo. An older tool still syncs. It opens no pull request in the team repo until it is updated.
+- `A newer Tugboat is released: ...` is the last line when a newer release exists. Sync asks this repo for its release tags at most once a day, and only when the team repo was just reached. A lookup that fails shows nothing, changes nothing, and is tried again an hour later.
+
+One machine can serve several projects. Each project's minimum is checked in that project's repos, and the newest release satisfies all of them.
 
 ## Commands
 
@@ -44,7 +66,7 @@ To remove the command: `uv tool uninstall tugboat`.
 | `tug sync` | Brings the team repo clone, an app repo's copy of it, and the agent tool files up to date | Works |
 | `tug status` | Prints the session brief | Not built yet |
 | `tug doctor` | Checks that this machine and repo are ready | Not built yet |
-| `tug update` | Updates `tug` to the newest release | Not built yet |
+| `tug update` | Updates `tug` to the newest release | Works |
 | `tug expire` | Removes records older than six months, after confirmation | Not built yet |
 | `tug remove` | Takes Tugboat out of a repo, or out of every repo on the machine | Not built yet |
 | `tug hook session-start` | Called by the agent tool at the start of a session. Syncs and reports to the agent. | Works |
