@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import NamedTuple
 
 from tugboat import apprepo
-from tugboat.address import parse_remote_url
+from tugboat.address import TeamRepoAddress, parse_remote_url
 from tugboat.errors import TugError
 from tugboat.gitrun import GitError, git
 
@@ -49,6 +49,14 @@ def _remote(root: Path) -> tuple[str, str]:
         raise TugError(f"this repo has several remotes and none is called 'origin' ({', '.join(sorted(names))}). Tugboat does not guess which one is GitHub.")
     # Read as written. `git remote get-url` would apply the developer's URL rewrites.
     return name, git("config", "--get", f"remote.{name}.url", cwd=root)
+
+
+def remote_address(root: Path) -> TeamRepoAddress | None:
+    """The GitHub address of an app repo, or None when it has none that Tugboat can read."""
+    try:
+        return parse_remote_url(_remote(root)[1])
+    except TugError:
+        return None
 
 
 def _default_branch(root: Path, remote: str) -> tuple[str, str]:

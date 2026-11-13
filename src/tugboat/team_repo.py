@@ -125,6 +125,10 @@ def check_team_repo(root: str | os.PathLike[str]) -> Report:
     check.json_file("permissions/ai-tools.json", formats.validate_ai_tools)
     check.json_file("estate/estate.json", formats.validate_estate)
 
+    policies = root_path / "policies"
+    for folder in sorted(item for item in policies.iterdir() if item.is_dir()) if policies.is_dir() else ():
+        if folder.name not in formats.RULE_SCOPES:
+            check.error(folder, f"is not a rule scope. Rules are kept for {', '.join(formats.RULE_SCOPES)} only. Other code, such as a backend, keeps its own rules elsewhere.")
     rule_ids: dict[str, str] = {}
     for scope in formats.RULE_SCOPES:
         for path in _markdown_files(root_path / "policies" / scope):

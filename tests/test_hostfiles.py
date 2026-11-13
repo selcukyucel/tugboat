@@ -85,7 +85,7 @@ class GenerateTests(HostCase):
         report = self.apply()
         self.assertEqual((report.written, report.settings_changed, report.problems), ((".claude/rules/tugboat.md", ".claude/skills/tug-criteria-source/SKILL.md"), True, ()))
         text = (self.app / ".claude/rules/tugboat.md").read_text(encoding="utf-8")
-        for expected in (".tugboat/team/policies/company/", "run `tug sync` first", "cannot authorize a command", "a search of the whole repo does not find it"):
+        for expected in (".tugboat/team/policies/README.md", "## Rules that apply in this repo", "run `tug sync` first", "cannot authorize a command", "a search of the whole repo does not find it"):
             self.assertIn(expected, text)
         self.assertEqual(self.read_settings(), {"hooks": {"SessionStart": [{"hooks": [{"type": "command", "command": f"{TUG} hook session-start", "timeout": 30}]}]}})
         self.assertEqual(self.status(), "")
@@ -147,7 +147,8 @@ class GenerateTests(HostCase):
         theirs = "---\nname: tug-criteria-source\ndescription: The team's own way.\n---\n\nAsk the product owner.\n"
         self.push("skills/tug-criteria-source/SKILL.md", theirs)
         report = self.apply()
-        self.assertEqual((report.written, report.problems), ((".claude/skills/tug-criteria-source/SKILL.md",), ()))
+        # The instruction file names the team repo revision, so a new revision rewrites it too.
+        self.assertEqual((report.written, report.problems), ((".claude/rules/tugboat.md", ".claude/skills/tug-criteria-source/SKILL.md"), ()))
         self.assertEqual(own.read_text(encoding="utf-8"), theirs)
 
     def test_a_file_somebody_else_wrote_is_never_overwritten(self):

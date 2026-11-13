@@ -134,11 +134,16 @@ class CheckTests(TeamRepoCase):
         self.assert_one_error("profile.json: profile approval_mode must be one of")
 
     def test_a_rule_in_the_wrong_folder_or_with_the_wrong_name(self):
-        self.write_md("policies/android/IOS-002.md", {**RULE, "id": "IOS-002"})
-        self.assert_one_error("policies/android/IOS-002.md: has scope 'ios' and must be in policies/ios/")
-        (self.repo / "policies/android/IOS-002.md").unlink()
-        self.write_md("policies/ios/swift-testing.md", {**RULE, "id": "IOS-002"})
-        self.assert_one_error("policies/ios/swift-testing.md: must be named IOS-002.md, after its id")
+        self.write_md("policies/android/IOS-009.md", {**RULE, "id": "IOS-009"})
+        self.assert_one_error("policies/android/IOS-009.md: has scope 'ios' and must be in policies/ios/")
+        (self.repo / "policies/android/IOS-009.md").unlink()
+        self.write_md("policies/ios/swift-testing.md", {**RULE, "id": "IOS-009"})
+        self.assert_one_error("policies/ios/swift-testing.md: must be named IOS-009.md, after its id")
+
+    def test_a_folder_for_backend_rules_is_refused(self):
+        (self.repo / "policies/backend").mkdir()
+        (self.repo / "policies/backend/BE-001.md").write_text("a backend rule\n", encoding="utf-8")
+        self.assert_one_error("policies/backend: is not a rule scope. Rules are kept for company, ios, android only.")
 
     def test_two_rules_with_one_id(self):
         self.write_md("policies/ios/copy.md", dict(RULE))

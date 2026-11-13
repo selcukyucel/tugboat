@@ -22,7 +22,7 @@ Tugboat uses only the Python standard library. It has no third-party package at 
 ## Install
 
 ```sh
-uv tool install git+https://github.com/selcukyucel/tugboat@v0.11.0
+uv tool install git+https://github.com/selcukyucel/tugboat@v0.12.0
 tug version
 ```
 
@@ -88,6 +88,38 @@ The starter layout explains itself: its `README.md` gives the layout, and each f
 Structured files are JSON. Rules, notes, decision records, and agent definitions are Markdown files with a small header.
 
 `tug team check` checks all of them and prints one line per problem. It exits with `1` when a file is not valid. The starter layout runs the same check on every pull request.
+
+## Rules
+
+Engineering rules live in the team repo under `policies/`, one file per rule, in the folder of their scope: `company`, `ios`, or `android`. There are no backend rules.
+
+**Each rule has two switches.**
+
+| Field | Value | What it means |
+|---|---|---|
+| `status` | `example` | The rule shows the format. It is not applied, and a break of it is not reported. |
+| `status` | `adopted` | The team uses the rule. The agent gets it at the start of each session. |
+| `mode` | `advisory` | The agent follows the rule and reports a break. The work is not blocked. |
+| `mode` | `required` | A break is a blocker. The agent stops and tells the developer. |
+
+**The starter layout has twelve rules, four for each scope. All of them are advisory examples.** So a new team repo applies no rule at all until the team adopts one. That is on purpose:
+
+- The starter rules are illustrations, such as "new unit tests use Swift Testing". They are not your team's rules until your team says so.
+- An adopted rule starts as advisory. The team sees how often it is broken, and whether it is right, while nobody is blocked by it.
+- A rule becomes required when the team decides it has earned that.
+
+Adopting a rule and making it required are each a pull request in the team repo that a person approves. The agent can do neither: it reads a copy of the approved revision and cannot change it.
+
+**What the agent gets.** Sync writes the rules that apply into the instruction file, `.claude/rules/tugboat.md`, which every agent tool loads at the start of a session:
+
+- an iOS app repo gets the adopted company rules and the adopted iOS rules. It does not get the Android rules. An Android app repo gets company and Android.
+- each rule is listed with its ID, its mode, what it says, and the path of its file
+- the team repo revision the rules come from is named, and the agent is told to name it in every report that mentions a rule
+- the platform comes from the project profile. A repo that is not in the profile gets the company rules only, and the file says why.
+- a rule file that cannot be read is not applied. The sync report and the instruction file both name it.
+- when two rules conflict, or the work cannot follow a rule, the agent is told to show that to the developer. It does not choose, and it cannot grant an exception.
+
+Today a required rule blocks through the agent's instructions only. The hooks that enforce a block are not built yet.
 
 ## Proposing a change to the team repo
 
@@ -252,7 +284,7 @@ Changed in the team repo since this repo's last sync (bb959ef to 9e2ae27):
 
 | File | What it is |
 |---|---|
-| `.claude/rules/tugboat.md` | The instruction file. It tells the agent where the team content is and how to use it. |
+| `.claude/rules/tugboat.md` | The instruction file. It tells the agent where the team content is and how to use it, and lists the rules that apply in this repo. |
 | `.claude/skills/<name>/` | Each skill from the team repo, and the skill `tug-criteria-source` that ships with Tugboat |
 | `.claude/agents/<name>.md` | Each approved agent definition from the team repo |
 | `.claude/settings.local.json` | Tugboat adds one hook here, so that each session starts with a sync |
