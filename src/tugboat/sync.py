@@ -146,12 +146,12 @@ def _local_edits(clone: Path) -> tuple[str, ...]:
     return (f"{count} in the clone, kept untouched: {names}{more}",)
 
 
-def _bring_up_to_date(address: TeamRepoAddress, clone: Path) -> tuple[bool, tuple[str, ...]]:
+def _bring_up_to_date(address: TeamRepoAddress, clone: Path, fetch_timeout: float) -> tuple[bool, tuple[str, ...]]:
     """Fetch and move forward. Return (updated, notes). Raise GitError when it cannot."""
     found = git("config", "--get", "remote.origin.url", cwd=clone)
     if found != address.url:
         raise GitError("sync", f"the clone at {clone} belongs to a different address ({found}). It was left as it is.")
-    git("fetch", "--quiet", "--no-tags", "--no-recurse-submodules", "origin", BRANCH, cwd=clone, timeout=FETCH_TIMEOUT)
+    git("fetch", "--quiet", "--no-tags", "--no-recurse-submodules", "origin", BRANCH, cwd=clone, timeout=fetch_timeout)
 
     notes = _local_edits(clone)
     try:
@@ -173,7 +173,7 @@ def _bring_up_to_date(address: TeamRepoAddress, clone: Path) -> tuple[bool, tupl
     return True, notes
 
 
-def sync_team_repo(address: TeamRepoAddress, *, lock_wait: float = LOCK_WAIT) -> SyncReport:
+def sync_team_repo(address: TeamRepoAddress, *, lock_wait: float = LOCK_WAIT, fetch_timeout: float = FETCH_TIMEOUT) -> SyncReport:
     """Clone the team repo if needed, then bring the clone up to date. Never raises for a failed sync."""
     clone = paths.team_repo_clone(address)
     with _lock(paths.sync_lock_file(address), lock_wait) as held:
@@ -193,7 +193,7 @@ def sync_team_repo(address: TeamRepoAddress, *, lock_wait: float = LOCK_WAIT) ->
                     _clone(address, clone)
                     cloned = True
                 else:
-                    updated, notes = _bring_up_to_date(address, clone)
+                    updated, notes = _bring_up_to_date(address, clone, fetch_timeout)
             except GitError as failure:
                 error = failure.reason if failure.action == "sync" else str(failure)
                 if _is_clone(clone) and not notes:

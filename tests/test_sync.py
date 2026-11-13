@@ -69,7 +69,14 @@ class SyncCase(unittest.TestCase):
         self.tmp = Path(holder.name).resolve()
         env = mock.patch.dict(
             os.environ,
-            {"TUG_HOME": os.fspath(self.tmp / "home"), "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"},
+            {
+                "TUG_HOME": os.fspath(self.tmp / "home"),
+                "GIT_CONFIG_GLOBAL": os.devnull,
+                "GIT_CONFIG_NOSYSTEM": "1",
+                # Keeps this machine's own global ignore file out of the tests. Without this,
+                # a "Git sees nothing" check could pass thanks to the developer's settings.
+                "XDG_CONFIG_HOME": os.fspath(self.tmp / "xdg"),
+            },
         )
         env.start()
         self.addCleanup(env.stop)

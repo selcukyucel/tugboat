@@ -90,7 +90,7 @@ def _configure_sync(parser: argparse.ArgumentParser) -> None:
 def _sync(args: argparse.Namespace) -> int:
     from pathlib import Path
 
-    from tugboat import apprepo, sync, teamcopy
+    from tugboat import apprepo, appsync, sync, teamcopy
     from tugboat.address import parse_team_repo_address
     from tugboat.errors import DataError
 
@@ -120,26 +120,41 @@ def _sync(args: argparse.Namespace) -> int:
     else:
         raise TugError("this folder is not set up yet, and `tug init` is not built. Until then, pass --team-repo ADDRESS.")
 
-    report = sync.sync_team_repo(address)
-    print(sync.render(report))
-    if repo is not None and report.usable:
-        # The copy needs no network. It is taken from what the last working sync fetched.
-        print(teamcopy.render(teamcopy.refresh_copy(repo, address, force=args.force), repo))
+    if repo is None:
+        report = sync.sync_team_repo(address)
+        print(sync.render(report))
+        usable = report.usable
+    else:
+        result = appsync.run(repo, address, force=args.force)
+        print(appsync.render(result))
+        usable = result.sync.usable
     # A sync that did not work still lets work go on, as long as there is a clone to work from.
-    return EXIT_OK if report.usable else EXIT_ERROR
+    return EXIT_OK if usable else EXIT_ERROR
+
+
+def _configure_hook(parser: argparse.ArgumentParser) -> None:
+    from tugboat.hook import EVENTS
+
+    parser.add_argument("event", choices=EVENTS, help="the event the agent tool is reporting")
+
+
+def _hook(args: argparse.Namespace) -> int:
+    from tugboat import hook
+
+    return hook.main(args.event)
 
 
 COMMANDS: tuple[Command, ...] = (
     Command("version", "Print the installed version", _version),
     Command("init", "Set up the app repo it is run in"),
-    Command("sync", "Bring the team repo clone, and this repo's copy of it, up to date", _sync, _configure_sync),
+    Command("sync", "Bring the team repo clone, this repo's copy, and the agent tool files up to date", _sync, _configure_sync),
     Command("status", "Print the session brief"),
     Command("doctor", "Check that this machine and repo are ready"),
     Command("update", "Update tug to the newest release"),
     Command("expire", "Remove records older than six months, after confirmation"),
     Command("remove", "Take Tugboat out of this repo, or out of every repo on this machine"),
     Command("team", "Start or check a team repo: `tug team new`, `tug team check`", _team, _configure_team),
-    Command("hook", "Called by the agent tool's hooks. Not typed by a developer."),
+    Command("hook", "Called by the agent tool's hooks. Not typed by a developer.", _hook, _configure_hook),
 )
 
 

@@ -8,7 +8,7 @@ It runs beside Claude Code, GitHub Copilot CLI, and GitHub Copilot in VS Code. I
 
 ## Status
 
-Early. This version can start and check a team repo, keep a local clone of it up to date, and keep a read-only copy of its content inside an app repo. It cannot yet generate the files the agent tools load.
+Early. This version can start and check a team repo, keep a local clone of it up to date, keep a read-only copy of its content inside an app repo, and generate the files the agent tools load. It syncs at the start of each agent session. It does not yet check or block anything the agent does.
 A command that is not written yet is listed and answers "not built yet". Nothing here is ready for daily use.
 
 ## Requirements
@@ -22,7 +22,7 @@ Tugboat uses only the Python standard library. It has no third-party package at 
 ## Install
 
 ```sh
-uv tool install git+https://github.com/selcukyucel/tugboat@v0.4.0
+uv tool install git+https://github.com/selcukyucel/tugboat@v0.5.0
 tug version
 ```
 
@@ -38,13 +38,13 @@ To remove the command: `uv tool uninstall tugboat`.
 | `tug team new <folder>` | Writes the starter layout of a team repo into an empty folder | Works |
 | `tug team check [folder]` | Checks every file Tugboat reads in a team repo | Works |
 | `tug init` | Sets up the app repo it is run in | Not built yet |
-| `tug sync` | Brings the team repo clone, and an app repo's copy of it, up to date | Works. The first run needs `--team-repo` and `--app-repo`. |
+| `tug sync` | Brings the team repo clone, an app repo's copy of it, and the agent tool files up to date | Works. The first run needs `--team-repo` and `--app-repo`. |
 | `tug status` | Prints the session brief | Not built yet |
 | `tug doctor` | Checks that this machine and repo are ready | Not built yet |
 | `tug update` | Updates `tug` to the newest release | Not built yet |
 | `tug expire` | Removes records older than six months, after confirmation | Not built yet |
 | `tug remove` | Takes Tugboat out of a repo, or out of every repo on the machine | Not built yet |
-| `tug hook` | Called by the agent tool's hooks | Not built yet |
+| `tug hook session-start` | Called by the agent tool at the start of a session. Syncs and reports to the agent. | Works |
 
 Exit codes: `0` success, `1` error, `2` usage error (agent tools read `2` from a hook as "deny"), `3` command not built yet.
 
@@ -71,7 +71,7 @@ tug sync --team-repo git@github.com:owner/name.git --app-repo path/to/app   # th
 tug sync                                                                     # after that, inside the app repo
 ```
 
-Sync does two things.
+Sync does three things.
 
 **It keeps a clone of the team repo** at `~/.tugboat/team-repos/<host>/<owner>/<name>`.
 
@@ -87,6 +87,23 @@ Sync does two things.
 - The files are read-only. To change a rule or a note, open a pull request in the team repo.
 - Git ignores `.tugboat/`. Tugboat adds it to the repo's local exclude file and touches no tracked file.
 - Links in the team repo are not copied.
+
+**It generates the files the agent tools load**, once, under `.claude/`. Claude Code, GitHub Copilot CLI, and GitHub Copilot in VS Code all read them, so nothing is written twice.
+
+| File | What it is |
+|---|---|
+| `.claude/rules/tugboat.md` | The instruction file. It tells the agent where the team content is and how to use it. |
+| `.claude/skills/<name>/` | Each skill from the team repo |
+| `.claude/agents/<name>.md` | Each approved agent definition from the team repo |
+| `.claude/settings.local.json` | Tugboat adds one hook here, so that each session starts with a sync |
+
+- A second sync with nothing new writes no file.
+- Tugboat never overwrites a file it did not write, and never changes a file the repo tracks. It reports the path.
+- `.claude/settings.local.json` is yours. Tugboat changes only its own hook entries, which it recognises by their command, and keeps every other key and hook.
+- Every generated file is listed in the repo's local exclude file, so `git status` stays clean.
+- The hook calls `tug` by its full path, so it does not depend on the agent tool's `PATH`.
+
+At the start of a session the hook runs a sync and hands its report to the agent. A sync that fails is reported in one line and the session goes on. Outside a repo that Tugboat was set up in, the hook does nothing.
 
 The two options are a stopgap until `tug init` exists.
 
