@@ -22,4 +22,4 @@ version = { attr = "tugboat.__version__" }
 where = ["src"]
 
 [tool.setuptools.package-data]
-tugboat = ["starter/**/*.md", "starter/**/*.json", "starter/**/*.yml"]
+tugboat = ["starter/**/*.md", "starter/**/*.json", "starter/**/*.yml", "skills/**/*.md"]

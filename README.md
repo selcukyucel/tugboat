@@ -22,7 +22,7 @@ Tugboat uses only the Python standard library. It has no third-party package at 
 ## Install
 
 ```sh
-uv tool install git+https://github.com/selcukyucel/tugboat@v0.8.0
+uv tool install git+https://github.com/selcukyucel/tugboat@v0.9.0
 tug version
 ```
 
@@ -38,7 +38,9 @@ To remove the command: `uv tool uninstall tugboat`.
 | `tug team new <folder>` | Writes the starter layout of a team repo into an empty folder | Works |
 | `tug team check [folder]` | Checks every file Tugboat reads in a team repo | Works |
 | `tug team propose` | Proposes a change to the team repo as a pull request | Works |
-| `tug init` | Sets up the app repo it is run in | Works. The CI workflows and the first-session step for acceptance criteria are not built yet. |
+| `tug init` | Sets up the app repo it is run in | Works. The CI workflows are not built yet. |
+| `tug profile show` | Prints the project profile this machine works from | Works |
+| `tug profile set-criteria` | Saves where the project's stories keep their acceptance criteria. Run by the agent in the first session. | Works. Not yet tried with a real tracker. |
 | `tug sync` | Brings the team repo clone, an app repo's copy of it, and the agent tool files up to date | Works |
 | `tug status` | Prints the session brief | Not built yet |
 | `tug doctor` | Checks that this machine and repo are ready | Not built yet |
@@ -147,7 +149,42 @@ Projects under `Pods/`, `Carthage/`, `node_modules/`, and similar folders are no
 
 A tool that is older than the profile's minimum tool version still sets up the repo. It proposes no profile change until it is updated.
 
-Not built yet: the workflows of the CI checks (the choice is saved), and the step in the first agent session that finds where acceptance criteria are kept.
+Not built yet: the workflows of the CI checks. The choice is saved.
+
+## The first agent session: where acceptance criteria are kept
+
+One setup step cannot run in a terminal. Tugboat needs to know where the project's stories keep their acceptance criteria, and only the agent tool is signed in to the tracker. `tug` has no tracker sign-in.
+
+So init leaves this step open, and every sync report says `Setup is not finished` until it is done. In an agent session, ask the agent to run the skill `tug-criteria-source`. Tugboat installs that skill with the other agent tool files. The agent then:
+
+1. asks you for one sample story that has acceptance criteria
+2. reads it through the tracker connection of the agent tool: the Atlassian connection for Jira, the GitHub connection for GitHub Projects
+3. lists every place where the criteria could be, with a short excerpt of each
+4. waits for your pick
+5. saves it with `tug profile set-criteria`, which proposes the change as a pull request in the team repo
+
+There are three kinds of place:
+
+| Kind | What it is | The name that is saved |
+|---|---|---|
+| `field` | A field of the tracker, such as a Jira custom field | The field's name, with the ID of a custom field in brackets: `Acceptance Criteria (customfield_10042)` |
+| `section` | A headed section in the story's text | The heading's text: `Acceptance criteria` |
+| `task-list` | A task list (check boxes) in the story's text | The heading the list is under, or `body` when it is under none |
+
+The step is done once per project. A second developer is not asked. You can also save the pick by hand:
+
+```sh
+tug profile set-criteria --kind section --name "Acceptance criteria"
+```
+
+- It follows the same rules as every profile change: a pull request that a person merges, and this machine's own copy until then.
+- Offline, the pick is kept on this machine and the command exits with `1`. Run it again to propose it.
+- Changing the tracker later clears the saved source, because it named a place in the old tracker.
+- A team that wants its own steps puts a skill with the same name in the team repo. It replaces the one that ships with Tugboat.
+
+`tug profile show` prints the profile this machine works from, and says whether it is the approved one or a proposal that waits for its merge.
+
+This step was tested with a stand-in for GitHub. It was not yet run in an agent session with a real Jira or GitHub connection.
 
 ## Sync
 
@@ -179,7 +216,7 @@ Sync does three things.
 | File | What it is |
 |---|---|
 | `.claude/rules/tugboat.md` | The instruction file. It tells the agent where the team content is and how to use it. |
-| `.claude/skills/<name>/` | Each skill from the team repo |
+| `.claude/skills/<name>/` | Each skill from the team repo, and the skill `tug-criteria-source` that ships with Tugboat |
 | `.claude/agents/<name>.md` | Each approved agent definition from the team repo |
 | `.claude/settings.local.json` | Tugboat adds one hook here, so that each session starts with a sync |
 
@@ -189,7 +226,7 @@ Sync does three things.
 - Every generated file is listed in the repo's local exclude file, so `git status` stays clean.
 - The hook calls `tug` by its full path, so it does not depend on the agent tool's `PATH`.
 
-At the start of a session the hook runs a sync and hands its report to the agent. A sync that fails is reported in one line and the session goes on. Outside a repo that Tugboat was set up in, the hook does nothing.
+At the start of a session the hook runs a sync and hands its report to the agent. A sync that fails is reported in one line and the session goes on. The report also says when the project's setup is not finished, and when a profile change that this machine proposed was merged. Outside a repo that Tugboat was set up in, the hook does nothing.
 
 `tug sync --team-repo ADDRESS` brings only the clone of one team repo up to date, from any folder. `--app-repo FOLDER` names an app repo when the command is run from somewhere else.
 

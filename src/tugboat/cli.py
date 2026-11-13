@@ -209,22 +209,110 @@ def _hook(args: argparse.Namespace) -> int:
     return hook.main(args.event)
 
 
+def _team_repo_of(option: str | None):  # noqa: ANN202 - the address type is imported late
+    """The team repo a command works on: the one given, or the one this app repo is set up for."""
+    from tugboat import apprepo, teamcopy
+    from tugboat.address import parse_team_repo_address
+
+    if option:
+        return parse_team_repo_address(option)
+    try:
+        state = teamcopy.read_state(apprepo.find_app_repo("."))
+    except TugError:
+        state = None
+    if state is None:
+        raise TugError("this folder is not set up with Tugboat. Pass --team-repo ADDRESS.")
+    return parse_team_repo_address(state["team_repo"])
+
+
+def _configure_profile(parser: argparse.ArgumentParser) -> None:
+    from tugboat import profile
+
+    actions = parser.add_subparsers(dest="profile_command", metavar="<action>", required=True)
+    show = actions.add_parser(
+        "show",
+        help="Print the project profile this machine works from",
+        description="Print the project profile this machine works from: the approved one, or this machine's own proposal while it waits for its merge. Needs no network.",
+    )
+    criteria = actions.add_parser(
+        "set-criteria",
+        help="Save where the project's stories keep their acceptance criteria",
+        description="Save where the project's stories keep their acceptance criteria. The change goes to the team repo as a pull request that a person merges. "
+        "An agent runs this at the end of the skill `tug-criteria-source`, after the developer picked.",
+    )
+    criteria.add_argument("--kind", required=True, choices=[value for value, _ in profile.CRITERIA_KINDS], help="a tracker field, a headed section in the story's text, or a task list in the story's text")
+    criteria.add_argument("--name", required=True, help="the field's name, or the heading's text. For a task list under no heading: body")
+    criteria.add_argument("--yes", action="store_true", help="open the pull request without being asked")
+    for action in (show, criteria):
+        action.add_argument("--team-repo", metavar="ADDRESS", help="the team repo. Not needed inside an app repo that Tugboat was set up in.")
+
+
+def _profile(args: argparse.Namespace) -> int:
+    from tugboat import paths, profile, sync, teampr
+
+    address = _team_repo_of(args.team_repo)
+    if args.profile_command == "show":
+        if not (paths.team_repo_clone(address) / ".git").exists():
+            raise TugError(f"this machine has no copy of the team repo {address.url} yet. Run `tug sync` first.")
+        working = profile.load(address)
+        if working.note:
+            print(working.note)
+        if working.profile is None:
+            print("This project has no profile yet. `tug init`, run in an app repo in a terminal, creates it.")
+            return EXIT_ERROR
+        if working.pending is None:
+            print(f"Project profile, approved in the team repo {address.slug}:")
+        else:
+            print(f"Project profile, as this machine proposed it. It waits for its merge: {profile.where(working.pending)}")
+        print("\n".join(profile.describe(working.profile)))
+        return EXIT_OK
+
+    report = sync.sync_team_repo(address)
+    if not report.usable:
+        raise TugError(f"the team repo could not be reached, and this machine has no copy of it ({report.error}). Nothing was saved.")
+    working = profile.load(address)
+    if working.note:
+        print(working.note)
+    if working.profile is None:
+        raise TugError("this project has no profile yet. `tug init`, run in an app repo in a terminal, creates it. Nothing was saved.")
+    proposed = profile.with_criteria_source(working.profile, kind=args.kind, name=args.name)
+    words = profile.source_words(proposed["tracker"]["criteria_source"])
+    needs_proposal, pending, note = profile.plan(address, working, proposed)
+    if note:
+        print(note)
+    if not needs_proposal:
+        print(f"Already saved: acceptance criteria are read from {words}.")
+        if pending is not None:
+            print(f"The change waits for its merge: {profile.where(pending)}")
+        return EXIT_OK
+    if profile.below_minimum(working.approved):
+        raise TugError(f"this project needs tug {working.approved['minimum_tool_version']} or newer, and this is {installed_version()}. Update `tug` first. Nothing was saved.")
+
+    print(f"Acceptance criteria will be read from {words}.")
+    print(f"The profile changes only through a pull request in the team repo {address.slug}.")
+    if pending is not None and pending.branch:
+        print(f"The new pull request replaces this machine's earlier proposal. Close that one: {profile.where(pending)}")
+    if not args.yes:
+        if not sys.stdin.isatty():
+            raise TugError("a pull request needs a person to confirm it. Run this in a terminal, or pass --yes. Nothing was saved.")
+        if input("Open this pull request? [y/N] ").strip().lower() not in {"y", "yes"}:
+            raise TugError("stopped. Nothing was saved.")
+    pending, proposal, failure = profile.propose(address, working, proposed, title="Set where acceptance criteria are read from", origin="Proposed by `tug profile set-criteria`.")
+    if proposal is None:
+        print(f"The pull request could not be made: {failure}")
+        print("The choice is kept on this machine. Run the same command again to propose it.")
+        return EXIT_ERROR
+    print(teampr.render(proposal))
+    print("Until the merge, Tugboat works from its own copy of the profile on this machine.")
+    return EXIT_OK
+
+
 def _team_propose(args: argparse.Namespace) -> int:
     from pathlib import Path
 
-    from tugboat import apprepo, teamcopy, teampr
-    from tugboat.address import parse_team_repo_address
+    from tugboat import teampr
 
-    if args.team_repo:
-        address = parse_team_repo_address(args.team_repo)
-    else:
-        try:
-            state = teamcopy.read_state(apprepo.find_app_repo("."))
-        except TugError:
-            state = None
-        if state is None:
-            raise TugError("this folder is not set up with Tugboat. Pass --team-repo ADDRESS.")
-        address = parse_team_repo_address(state["team_repo"])
+    address = _team_repo_of(args.team_repo)
 
     changes: dict[str, bytes | None] = {}
     for item in args.file:
@@ -260,6 +348,7 @@ COMMANDS: tuple[Command, ...] = (
     Command("version", "Print the installed version", _version),
     Command("init", "Set up the app repo it is run in", _init, _configure_init),
     Command("sync", "Bring the team repo clone, this repo's copy, and the agent tool files up to date", _sync, _configure_sync),
+    Command("profile", "Show the project profile, or save where acceptance criteria are kept: `tug profile show`, `set-criteria`", _profile, _configure_profile),
     Command("status", "Print the session brief"),
     Command("doctor", "Check that this machine and repo are ready"),
     Command("update", "Update tug to the newest release"),

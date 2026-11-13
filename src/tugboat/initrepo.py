@@ -236,17 +236,9 @@ def run(start: str | os.PathLike[str], options: Options) -> int:
         proposed = _changed_profile(current, options) if wants_change else current
     proposed = profile.with_repo(proposed, github=found.github, default_branch=found.default_branch, platform=found.platform)
 
-    pending = working.pending
-    if proposed == working.approved:
-        needs_proposal = False
-        if pending is not None:
-            # The choices were changed back to what is approved.
-            profile.clear_pending(address)
-            if pending.branch:
-                print(f"The profile is the approved one again. Close the earlier proposal: {profile.where(pending)}")
-            pending = None
-    else:
-        needs_proposal = pending is None or pending.branch is None or proposed != pending.profile or options.propose_again
+    needs_proposal, pending, note = profile.plan(address, working, proposed, again=options.propose_again)
+    if note:
+        print(note)
 
     if needs_proposal and profile.below_minimum(working.approved):
         print()
@@ -265,20 +257,7 @@ def run(start: str | os.PathLike[str], options: Options) -> int:
         if pending is not None and pending.branch:
             print(f"It replaces this machine's earlier proposal. Close that one: {profile.where(pending)}")
         _confirm(options, "Open this pull request?", "a pull request needs a person to confirm it.")
-        body = f"Proposed by `tug init`, run in {found.github}.\n\n" + "\n".join(f"- {line}" for line in lines)
-        proposal = None
-        try:
-            proposal = teampr.propose(address, title=_title(working.approved, proposed, lines), body=body, changes={profile.FILE: profile.to_bytes(proposed)}, name="profile")
-        except TugError as error:
-            failure = str(error)
-        pending = profile.Pending(
-            base=working.approved,
-            profile=proposed,
-            branch=proposal.branch if proposal else None,
-            pull_request=proposal.pull_request if proposal else None,
-            open_link=proposal.open_link if proposal else None,
-        )
-        profile.write_pending(address, pending)
+        pending, proposal, failure = profile.propose(address, working, proposed, title=_title(working.approved, proposed, lines), origin=f"Proposed by `tug init`, run in {found.github}.")
         print()
         print(teampr.render(proposal) if proposal else f"The pull request could not be made: {failure}")
 
@@ -296,7 +275,8 @@ def run(start: str | os.PathLike[str], options: Options) -> int:
         print(f"Note: the team repo belongs to {address.owner} and this repo to {found.github.split('/')[0]}. Tugboat expects both under one organisation or account.")
     if proposed["ci_features"]:
         print(f"Note: the CI checks ({profile.names(proposed['ci_features'], profile.CI_FEATURES)}) are saved as a choice. Their workflows are not built yet.")
-    if proposed["tracker"]["criteria_source"] is None:
-        print("Note: where acceptance criteria are kept is not chosen yet. That step runs in an agent session and is not built yet.")
     print("Next: start a new agent session in this repo. It begins with a Tugboat sync report.")
+    if proposed["tracker"]["criteria_source"] is None:
+        print(f"One step is left, and it needs the tracker, so it runs in that session: ask the agent to run the skill `{hostfiles.CRITERIA_SKILL}`.")
+        print("It reads one sample story, lists where acceptance criteria could be, and saves your pick.")
     return EXIT_ERROR if failure else EXIT_OK

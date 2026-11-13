@@ -4,7 +4,7 @@ import unittest
 from unittest import mock
 
 import tugboat
-from tugboat import formats, initrepo, paths, profile, prompts, team_repo
+from tugboat import formats, hook, initrepo, paths, profile, prompts, team_repo
 from tugboat.address import parse_team_repo_address
 from tugboat.errors import TugError
 
@@ -58,18 +58,21 @@ class InitCase(SyncCase):
         self.git(root, "symbolic-ref", "refs/remotes/origin/HEAD", f"refs/remotes/origin/{head}")
         return root
 
-    def init(self, root, *argv, answers=None):
-        """Run `tug init` in a repo. With answers, a person sits at a terminal and types them."""
+    def tug(self, root, *argv, answers=None):
+        """Run `tug` in a folder. With answers, a person sits at a terminal and types them."""
         here = os.getcwd()
         os.chdir(root)
         try:
             with mock.patch("sys.stdin") as stdin, mock.patch("builtins.input", side_effect=list(answers or [])) as asked:
                 stdin.isatty.return_value = answers is not None
-                code, out, err = run("init", *argv)
+                code, out, err = run(*argv)
             self.questions = [call.args[0] for call in asked.call_args_list]
             return code, out, err
         finally:
             os.chdir(here)
+
+    def init(self, root, *argv, answers=None):
+        return self.tug(root, "init", *argv, answers=answers)
 
     def ok(self, root, *argv, answers=None):
         code, out, err = self.init(root, *argv, answers=answers)
@@ -131,7 +134,7 @@ class FirstInitTests(InitCase):
         self.assertTrue(self.set_up(self.ios))
         self.assertFalse((self.ios / ".tugboat/team/profile.json").exists())
         self.assertEqual(self.pending().branch, branch)
-        for text in ("Tracker: GitHub Projects", "Nothing was merged.", "This repo is set up for the project 'team'.", "works from its own copy of the profile", "Next: start a new agent session"):
+        for text in ("Tracker: GitHub Projects", "Nothing was merged.", "This repo is set up for the project 'team'.", "works from its own copy of the profile", "Next: start a new agent session", "ask the agent to run the skill `tug-criteria-source`"):
             self.assertIn(text, out)
 
     def test_it_completes_for_jira_and_with_every_ci_feature_from_options_alone(self):
@@ -367,6 +370,130 @@ class ProposalFailureTests(InitCase):
         other = self.app("other", IOS_FILES, "pat/shop")
         out = self.ok(other, "--yes", "--team-repo", TEAM, *FIRST)
         self.assertIn("the team repo belongs to acme and this repo to pat", out)
+
+
+class CriteriaSourceTests(InitCase):
+    """The step of the first agent session: the agent passes the developer's pick to `tug`."""
+
+    SECTION = ("profile", "set-criteria", "--kind", "section", "--name", "Acceptance criteria")
+
+    def first_init(self, tracker="github-projects", merge=True):
+        self.ok(self.ios, "--yes", "--team-repo", TEAM, "--tracker", tracker, "--approval", "owner")
+        if merge:
+            self.merge()
+
+    def save(self, *argv, root=None, answers=None):
+        code, out, err = self.tug(root or self.ios, *argv, answers=answers)
+        self.assertEqual((code, err), (0, ""), out)
+        return out
+
+    def hook_text(self):
+        return json.loads(hook.session_start(json.dumps({"cwd": os.fspath(self.ios)})))["additionalContext"]
+
+    def test_the_pick_for_a_github_projects_project_becomes_a_pull_request_and_then_the_profile(self):
+        self.first_init()
+        unfinished = "Setup is not finished: where the project's stories keep their acceptance criteria is not chosen yet. The skill `tug-criteria-source`"
+        self.assertIn(unfinished, self.save("sync"))
+        self.assertIn(unfinished, self.hook_text())
+
+        out = self.save(*self.SECTION, "--yes")
+        branch = self.proposals()[-1]
+        self.assertEqual(self.git(self.remote, "log", "-1", "--format=%s", branch), "Set where acceptance criteria are read from")
+        self.assertEqual(self.git(self.remote, "diff", "--name-only", "main", branch), "profile.json")
+        self.assertEqual(self.proposed(branch)["tracker"], {"kind": "github-projects", "criteria_source": {"kind": "section", "name": "Acceptance criteria"}})
+        self.assertIn("Acceptance criteria will be read from section 'Acceptance criteria'.", out)
+        self.assertIn("Nothing was merged.", out)
+        # This machine works from its own copy at once. The approved copy in the repo waits for the merge.
+        self.assertNotIn("Setup is not finished", self.save("sync"))
+        self.assertIn("as this machine proposed it", self.save("profile", "show"))
+
+        self.merge()
+        text = self.hook_text()
+        self.assertNotIn("Setup is not finished", text)
+        self.assertIn("The profile change that this machine proposed was merged.", text)
+        shown = self.save("profile", "show")
+        self.assertIn("Project profile, approved in the team repo acme/team:", shown)
+        self.assertIn("Acceptance criteria source: section 'Acceptance criteria'", shown)
+        self.assertIsNone(self.pending())
+        self.save("sync")
+        self.assertEqual(json.loads((self.ios / ".tugboat/team/profile.json").read_text(encoding="utf-8"))["tracker"]["criteria_source"]["kind"], "section")
+
+    def test_the_pick_for_a_jira_project_before_the_first_merge_replaces_the_waiting_proposal(self):
+        self.first_init("jira", merge=False)
+        out = self.save("profile", "set-criteria", "--kind", "field", "--name", "Acceptance Criteria (customfield_10042)", "--yes")
+        first, second = self.proposals()
+        self.assertIn("The new pull request replaces this machine's earlier proposal. Close that one:", out)
+        found = self.proposed(second)
+        self.assertEqual(found["tracker"], {"kind": "jira", "criteria_source": {"kind": "field", "name": "Acceptance Criteria (customfield_10042)"}})
+        self.assertEqual([repo["github"] for repo in found["app_repos"]], ["acme/shop-ios"])
+        self.assertIsNone(self.proposed(first)["tracker"]["criteria_source"])
+        self.assertEqual(self.pending().branch, second)
+
+    def test_the_same_pick_again_opens_nothing_and_a_task_list_is_a_third_kind(self):
+        self.first_init()
+        self.save(*self.SECTION, "--yes")
+        out = self.save(*self.SECTION, "--yes")
+        self.assertIn("Already saved: acceptance criteria are read from section 'Acceptance criteria'.", out)
+        self.assertIn("The change waits for its merge:", out)
+        self.assertEqual(len(self.proposals()), 2)
+        self.save("profile", "set-criteria", "--kind", "task-list", "--name", "body", "--yes")
+        self.assertEqual(self.proposed()["tracker"]["criteria_source"], {"kind": "task-list", "name": "body"})
+
+    def test_a_person_at_a_terminal_is_asked_and_without_one_yes_is_needed(self):
+        self.first_init()
+        code, _, err = self.tug(self.ios, *self.SECTION)
+        self.assertEqual(code, 1)
+        self.assertIn("a pull request needs a person to confirm it. Run this in a terminal, or pass --yes. Nothing was saved.", err)
+        code, _, err = self.tug(self.ios, *self.SECTION, answers=["n"])
+        self.assertEqual((code, err), (1, "tug: stopped. Nothing was saved.\n"))
+        self.assertEqual(len(self.proposals()), 1)
+        self.assertIsNone(self.pending())
+        self.save(*self.SECTION, answers=["y"])
+        self.assertEqual(len(self.proposals()), 2)
+
+    def test_a_name_or_a_kind_that_will_not_do_saves_nothing(self):
+        self.first_init()
+        for name, message in ((" ", "the name cannot be empty"), ("two\nlines", "the name must be one line"), ("x" * 201, "the name cannot exceed 200 characters")):
+            code, _, err = self.tug(self.ios, "profile", "set-criteria", "--kind", "field", "--name", name, "--yes")
+            self.assertEqual((code, err), (1, f"tug: {message}\n"))
+        self.assertEqual(self.tug(self.ios, "profile", "set-criteria", "--kind", "comment", "--name", "x", "--yes")[0], 2)
+        self.assertEqual(len(self.proposals()), 1)
+
+    def test_offline_the_pick_is_kept_and_proposed_at_the_next_try(self):
+        self.first_init()
+        os.rename(self.remote, self.tmp / "unplugged.git")
+        code, out, err = self.tug(self.ios, *self.SECTION, "--yes")
+        self.assertEqual((code, err), (1, ""))
+        self.assertIn("The pull request could not be made: the team repo could not be reached", out)
+        self.assertIn("The choice is kept on this machine. Run the same command again to propose it.", out)
+        self.assertIsNone(self.pending().branch)
+        self.assertIn("Acceptance criteria source: section 'Acceptance criteria'", self.save("profile", "show"))
+        os.rename(self.tmp / "unplugged.git", self.remote)
+        self.save(*self.SECTION, "--yes")
+        self.assertEqual(self.pending().branch, self.proposals()[-1])
+
+    def test_a_project_without_a_profile_and_a_folder_that_is_not_set_up(self):
+        code, _, err = self.tug(self.ios, *self.SECTION, "--yes")
+        self.assertEqual(code, 1)
+        self.assertIn("this folder is not set up with Tugboat. Pass --team-repo ADDRESS.", err)
+        code, _, err = self.tug(self.ios, "profile", "show", "--team-repo", TEAM)
+        self.assertEqual(code, 1)
+        self.assertIn("has no copy of the team repo", err)
+        code, _, err = self.tug(self.ios, *self.SECTION, "--yes", "--team-repo", TEAM)
+        self.assertEqual(code, 1)
+        self.assertIn("this project has no profile yet.", err)
+        code, out, _ = self.tug(self.ios, "profile", "show", "--team-repo", TEAM)
+        self.assertEqual(code, 1)
+        self.assertIn("This project has no profile yet.", out)
+        self.assertEqual(self.proposals(), [])
+
+    def test_a_tool_below_the_minimum_saves_nothing(self):
+        self.first_init()
+        self.push("profile.json", json.dumps({**PROFILE, "tracker": {"kind": "jira", "criteria_source": None}, "minimum_tool_version": "99.0.0"}))
+        code, _, err = self.tug(self.ios, *self.SECTION, "--yes")
+        self.assertEqual(code, 1)
+        self.assertIn("this project needs tug 99.0.0 or newer", err)
+        self.assertEqual(len(self.proposals()), 1)
 
 
 class ProfileTests(unittest.TestCase):

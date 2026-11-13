@@ -15,6 +15,8 @@ import hashlib
 import os
 import shutil
 import sys
+from importlib import resources
+from importlib.resources.abc import Traversable
 from pathlib import Path
 from typing import NamedTuple
 
@@ -32,6 +34,8 @@ RULES_FILE = ".claude/rules/tugboat.md"
 SKILLS_FOLDER = ".claude/skills"
 AGENTS_FOLDER = ".claude/agents"
 COPY = f"{apprepo.LOCAL_FOLDER}/{teamcopy.COPY_FOLDER}"
+# The skill for the one setup step that needs the tracker. It ships with the tool.
+CRITERIA_SKILL = "tug-criteria-source"
 
 # The hooks Tugboat installs. More arrive with the tasks that build them.
 HOOKS: list[HookSpec] = [HookSpec("SessionStart", "session-start", 30)]
@@ -80,6 +84,7 @@ The copy comes from the team repo `{address.url}`.
 ## At the start of a session
 
 If no Tugboat sync report appeared at the start of this session, run `tug sync` first and read what it prints.
+If the report says that setup is not finished, tell the developer and offer the step it names.
 
 ## Where things are
 
@@ -120,6 +125,30 @@ def _skill_units(copy: Path, problems: list[str]) -> list[_Unit]:
     return units
 
 
+def _packaged_files(folder: Traversable, prefix: str = "") -> dict[str, bytes]:
+    files: dict[str, bytes] = {}
+    for item in sorted(folder.iterdir(), key=lambda entry: entry.name):
+        if item.name.startswith(("__", ".")):
+            continue
+        if item.is_dir():
+            files.update(_packaged_files(item, f"{prefix}{item.name}/"))
+        else:
+            files[f"{prefix}{item.name}"] = item.read_bytes()
+    return files
+
+
+def _own_skill_units(taken: set[str]) -> list[_Unit]:
+    """The skills that ship with the tool. A team skill with the same name replaces one."""
+    units = []
+    source = resources.files("tugboat").joinpath("skills")
+    for skill in sorted((item for item in source.iterdir() if item.is_dir()), key=lambda entry: entry.name):
+        if skill.name.startswith(("__", ".")) or skill.name in taken:
+            continue
+        files = {f"{SKILLS_FOLDER}/{skill.name}/{path}": content for path, content in _packaged_files(skill).items()}
+        units.append(_Unit(f"skill '{skill.name}'", f"/{SKILLS_FOLDER}/{skill.name}/", files))
+    return units
+
+
 def _agent_units(copy: Path, problems: list[str]) -> list[_Unit]:
     units = []
     folder = copy / "agents"
@@ -147,7 +176,9 @@ def desired_units(repo: Path, address: TeamRepoAddress) -> tuple[list[_Unit], li
     problems: list[str] = []
     copy = teamcopy.copy_path(repo)
     units = [_Unit("the instruction file", f"/{RULES_FILE}", {RULES_FILE: pointer_text(address).encode("utf-8")})]
-    units += _skill_units(copy, problems)
+    team_skills = _skill_units(copy, problems)
+    units += team_skills
+    units += _own_skill_units({unit.exclude.strip("/").rsplit("/", 1)[-1] for unit in team_skills})
     units += _agent_units(copy, problems)
     return units, problems
 

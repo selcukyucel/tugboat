@@ -16,12 +16,12 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, NamedTuple
 
-from tugboat import formats, paths, team_repo, teamcopy
+from tugboat import formats, paths, team_repo, teamcopy, teampr
 from tugboat.address import TeamRepoAddress
 from tugboat.errors import DataError, TugError
 from tugboat.gitrun import git
 from tugboat.strict_json import parse_json, pretty_json, read_json_file
-from tugboat.validate import require_exact_fields, require_object
+from tugboat.validate import require_choice, require_exact_fields, require_object, require_text
 from tugboat.version import installed_version, parse_version
 
 PENDING_SCHEMA = "tug.pending-profile/1"
@@ -34,6 +34,11 @@ SURFACES = (("claude-code", "Claude Code"), ("copilot-cli", "GitHub Copilot CLI"
 APPROVAL_MODES = (
     ("teammate", "A teammate. `main` of the team repo needs a pull request with one approving review."),
     ("owner", "The owner. For a solo project: the owner merges their own pull request."),
+)
+CRITERIA_KINDS = (
+    ("field", "A field of the tracker, such as a Jira custom field"),
+    ("section", "A headed section in the story's text"),
+    ("task-list", "A task list (check boxes) in the story's text"),
 )
 PLATFORM_NAMES = {"ios": "iOS", "android": "Android"}
 
@@ -203,6 +208,17 @@ def with_choices(
     return formats.validate_profile(changed)
 
 
+def with_criteria_source(profile: dict[str, Any], *, kind: object, name: object) -> dict[str, Any]:
+    """A copy that says where the project's stories keep their acceptance criteria."""
+    source = {
+        "kind": require_choice(kind, "the kind", formats.CRITERIA_KINDS),
+        "name": require_text(name, "the name", 200),
+    }
+    if "\n" in source["name"]:
+        raise DataError("the name must be one line")
+    return formats.validate_profile({**profile, "tracker": {"kind": profile["tracker"]["kind"], "criteria_source": source}})
+
+
 def find_repo(profile: dict[str, Any], github: str) -> dict[str, Any] | None:
     return next((repo for repo in profile["app_repos"] if repo["github"].lower() == github.lower()), None)
 
@@ -233,7 +249,7 @@ def _repo_words(repo: dict[str, Any]) -> str:
     return f"{repo['github']} ({PLATFORM_NAMES[repo['platform']]}, default branch {repo['default_branch']})"
 
 
-def _source_words(source: dict[str, Any] | None) -> str:
+def source_words(source: dict[str, Any] | None) -> str:
     return "not chosen yet" if source is None else f"{source['kind']} '{source['name']}'"
 
 
@@ -242,7 +258,7 @@ def describe(profile: dict[str, Any]) -> list[str]:
     return [
         f"Project: {profile['project']}",
         f"Tracker: {names([profile['tracker']['kind']], TRACKERS)}",
-        f"Acceptance criteria source: {_source_words(profile['tracker']['criteria_source'])}",
+        f"Acceptance criteria source: {source_words(profile['tracker']['criteria_source'])}",
         f"CI features: {names(profile['ci_features'], CI_FEATURES)}",
         f"Surfaces: {names(profile['surfaces'], SURFACES)}",
         f"Approval: {'a teammate' if profile['approval_mode'] == 'teammate' else 'the owner'}",
@@ -265,3 +281,47 @@ def changes(before: dict[str, Any] | None, after: dict[str, Any]) -> list[str]:
             lines.append(f"App repo changed: {_repo_words(repo)}  (was: {_repo_words(old_repos[key])})")
     lines.extend(f"App repo removed: {_repo_words(repo)}" for key, repo in old_repos.items() if key not in new_repos)
     return lines
+
+
+# ---------------------------------------------------------------- proposing
+
+
+def plan(address: TeamRepoAddress, working: Working, proposed: dict[str, Any], *, again: bool = False) -> tuple[bool, Pending | None, str | None]:
+    """Decide whether `proposed` needs a pull request.
+
+    Returns (it needs one, the earlier proposal that still waits, a note for
+    the developer). A profile that equals the approved one needs none, and an
+    earlier proposal is then withdrawn on this machine.
+    """
+    pending = working.pending
+    if proposed == working.approved:
+        if pending is None:
+            return False, None, None
+        clear_pending(address)
+        note = f"The profile is the approved one again. Close the earlier proposal: {where(pending)}" if pending.branch else None
+        return False, None, note
+    return pending is None or pending.branch is None or proposed != pending.profile or again, pending, None
+
+
+def propose(address: TeamRepoAddress, working: Working, proposed: dict[str, Any], *, title: str, origin: str) -> tuple[Pending, teampr.Proposal | None, str | None]:
+    """Open the pull request for a profile and keep the profile on this machine until the merge.
+
+    The profile is kept even when the pull request cannot be made, so the
+    machine can work from it and propose it later. Returns (what is kept, the
+    proposal, why it could not be made).
+    """
+    body = f"{origin}\n\n" + "\n".join(f"- {line}" for line in changes(working.approved, proposed))
+    proposal = failure = None
+    try:
+        proposal = teampr.propose(address, title=title, body=body, changes={FILE: to_bytes(proposed)}, name="profile")
+    except TugError as error:
+        failure = str(error)
+    pending = Pending(
+        base=working.approved,
+        profile=proposed,
+        branch=proposal.branch if proposal else None,
+        pull_request=proposal.pull_request if proposal else None,
+        open_link=proposal.open_link if proposal else None,
+    )
+    write_pending(address, pending)
+    return pending, proposal, failure
