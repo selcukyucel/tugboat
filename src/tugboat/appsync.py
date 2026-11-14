@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import NamedTuple
 
-from tugboat import aiuse, hostfiles, profile, releases, sync, teamcopy
+from tugboat import aiuse, ciworkflows, hostfiles, profile, releases, sync, teamcopy
 from tugboat.address import TeamRepoAddress
 from tugboat.errors import TugError
 from tugboat.version import Version, installed_version, parse_version
@@ -26,8 +26,8 @@ class AppSync(NamedTuple):
     newer: Version | None = None  # a release newer than this tool, when one is known
 
 
-def unfinished_setup(address: TeamRepoAddress) -> tuple[tuple[str, ...], str | None, Version | None]:
-    """What the profile says about this machine's setup. Needs no network.
+def unfinished_setup(address: TeamRepoAddress, repo: Path | None = None) -> tuple[tuple[str, ...], str | None, Version | None]:
+    """What the profile says about this machine's setup, and about this app repo. Needs no network.
 
     Returns (the setup steps still open, news of this machine's own profile
     proposal, the project's minimum tool version when this tool is below it).
@@ -41,13 +41,18 @@ def unfinished_setup(address: TeamRepoAddress) -> tuple[tuple[str, ...], str | N
     minimum = parse_version(working.approved["minimum_tool_version"]) if profile.below_minimum(working.approved) else None
     if working.profile is None:
         return ("this project has no profile yet. `tug init`, run in this repo in a terminal, creates it",), working.note, minimum
+    steps: list[str] = []
     if working.profile["tracker"]["criteria_source"] is None:
-        step = (
+        steps.append(
             "where the project's stories keep their acceptance criteria is not chosen yet. "
             f"The skill `{hostfiles.CRITERIA_SKILL}` finds it in an agent session and saves the developer's pick"
         )
-        return (step,), working.note, minimum
-    return (), working.note, minimum
+    if repo is not None:
+        # Sync changes no file Git sees. It only says when the workflow for the CI secret scan and the profile disagree.
+        step = ciworkflows.unfinished(repo, address, working.profile["ci_features"])
+        if step:
+            steps.append(step)
+    return tuple(steps), working.note, minimum
 
 
 def run(repo: Path, address: TeamRepoAddress, *, force: bool = False, quick: bool = False) -> AppSync:
@@ -58,7 +63,7 @@ def run(repo: Path, address: TeamRepoAddress, *, force: bool = False, quick: boo
         report = sync.sync_team_repo(address)
     if not report.usable:
         return AppSync(repo, report, None, None, None)
-    unfinished, profile_note, minimum = unfinished_setup(address)
+    unfinished, profile_note, minimum = unfinished_setup(address, repo)
     # The tool's repo is asked at most once a day, and only when the network just worked.
     newer = releases.newer_release(ask=report.ok)
     copy = host = None

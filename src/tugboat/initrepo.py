@@ -22,7 +22,7 @@ import shutil
 from collections.abc import Sequence
 from typing import Any, NamedTuple
 
-from tugboat import detect, hostfiles, paths, profile, prompts, sync, teamcopy, teampr
+from tugboat import ciworkflows, detect, hostfiles, paths, profile, prompts, sync, teamcopy, teampr
 from tugboat.address import TeamRepoAddress, parse_team_repo_address
 from tugboat.errors import EXIT_ERROR, EXIT_OK, DataError, TugError
 from tugboat.gitrun import git
@@ -265,6 +265,16 @@ def run(start: str | os.PathLike[str], options: Options) -> int:
     print()
     print(teamcopy.render(teamcopy.refresh_copy(found.root, address), found.root))
     print(hostfiles.render(hostfiles.apply(found.root, address)))
+    # The one file Git is meant to see: the workflow that calls the CI secret scan. It is written, never committed.
+    ci = ciworkflows.apply(
+        found.root,
+        address,
+        ciworkflows.SECRET_SCAN in proposed["ci_features"],
+        team_has_scan=ciworkflows.reusable_present(paths.team_repo_clone(address)),
+    )
+    if ci.lines:
+        print()
+        print("\n".join(ci.lines))
 
     print()
     print(f"This repo is set up for the project '{proposed['project']}'.")
@@ -274,8 +284,11 @@ def run(start: str | os.PathLike[str], options: Options) -> int:
         print("Until a person merges the profile pull request, Tugboat works from its own copy of the profile on this machine.")
     if address.owner.lower() != found.github.split("/")[0].lower():
         print(f"Note: the team repo belongs to {address.owner} and this repo to {found.github.split('/')[0]}. Tugboat expects both under one organisation or account.")
-    if proposed["ci_features"]:
-        print(f"Note: the CI checks ({profile.names(proposed['ci_features'], profile.CI_FEATURES)}) are saved as a choice. Their workflows are not built yet.")
+    waiting = [feature for feature in proposed["ci_features"] if feature not in ciworkflows.BUILT]
+    if len(waiting) == 1:
+        print(f"Note: the CI check ({profile.names(waiting, profile.CI_FEATURES)}) is saved as a choice. Its workflow is not built yet.")
+    elif waiting:
+        print(f"Note: the CI checks ({profile.names(waiting, profile.CI_FEATURES)}) are saved as a choice. Their workflows are not built yet.")
     print("Next: start a new agent session in this repo. It begins with a Tugboat sync report.")
     if proposed["tracker"]["criteria_source"] is None:
         print(f"One step is left, and it needs the tracker, so it runs in that session: ask the agent to run the skill `{hostfiles.CRITERIA_SKILL}`.")

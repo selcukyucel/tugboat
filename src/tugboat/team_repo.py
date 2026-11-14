@@ -16,6 +16,7 @@ from tugboat.version import installed_version
 
 MAX_MARKDOWN_BYTES = 512 * 1024
 MARKER = "tugboat.json"
+SECRET_SCAN_WORKFLOW = ".github/workflows/secret-scan.yml"
 PROFILE = "profile.json"
 # Folder READMEs explain a format. They are never read as a rule or a note.
 SKIPPED_NAMES = frozenset({"README.md"})
@@ -122,6 +123,8 @@ def check_team_repo(root: str | os.PathLike[str]) -> Report:
         check.warning(PROFILE, "is not there yet. `tug init` creates it.")
     else:
         profile = check.json_file(PROFILE, formats.validate_profile)
+    if profile and "secret-scan" in profile["ci_features"] and not (root_path / SECRET_SCAN_WORKFLOW).is_file():
+        check.warning(SECRET_SCAN_WORKFLOW, "is not there, and the project profile selects the CI secret scan. The check in each app repo would fail.")
     check.json_file("permissions/protected-paths.json", formats.validate_protected_paths)
     check.json_file("permissions/ai-tools.json", formats.validate_ai_tools)
     estate = check.json_file("estate/estate.json", formats.validate_estate)

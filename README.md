@@ -22,7 +22,7 @@ Tugboat uses only the Python standard library. It has no third-party package at 
 ## Install
 
 ```sh
-uv tool install git+https://github.com/selcukyucel/tugboat@v0.23.0
+uv tool install git+https://github.com/selcukyucel/tugboat@v0.24.0
 tug version
 ```
 
@@ -60,7 +60,7 @@ One machine can serve several projects. Each project's minimum is checked in tha
 | `tug team new <folder>` | Writes the starter layout of a team repo into an empty folder | Works |
 | `tug team check [folder]` | Checks every file Tugboat reads in a team repo | Works |
 | `tug team propose` | Proposes a change to the team repo as a pull request | Works |
-| `tug init` | Sets up the app repo it is run in | Works. The CI workflows are not built yet. |
+| `tug init` | Sets up the app repo it is run in | Works. Of the optional CI checks, the secret scan is built. |
 | `tug profile show` | Prints the project profile this machine works from | Works |
 | `tug profile set-criteria` | Saves where the project's stories keep their acceptance criteria. Run by the agent in the first session. | Works. Not yet tried with a real tracker. |
 | `tug sync` | Brings the team repo clone, an app repo's copy of it, and the agent tool files up to date | Works |
@@ -483,6 +483,38 @@ The checks run on the developer's machine, where they can be removed. A boundary
 Use these. The local checks make mistakes rarer. They do not make them impossible.
 
 The same page is in every team repo, as `permissions/hook-limits.md`.
+
+## CI secret scan (optional)
+
+The checks on a developer's machine can be removed there. A scan in CI cannot. A project can turn on one CI check: every pull request in an app repo is scanned for keys and tokens, and a finding fails the check.
+
+```sh
+tug init --ci secret-scan     # turn it on for the project, from any app repo
+tug init --ci none            # turn it off again
+```
+
+It has two parts.
+
+| Part | Where | What it is |
+|---|---|---|
+| The scan | The team repo, `.github/workflows/secret-scan.yml` | A reusable workflow. It runs [gitleaks](https://github.com/gitleaks/gitleaks), an open-source scanner, on the commits of the pull request. It ships with the starter layout. |
+| The caller | Each app repo, `.github/workflows/tugboat-secret-scan.yml` | A few lines that call the scan for every pull request. `tug init` writes it. |
+
+- **The scanner is pinned.** The workflow names one gitleaks version and the SHA-256 of its archive, and checks the download against it before it unpacks it.
+- **A finding is kept out of the log.** The log names the rule, the file, and the commit.
+- **The caller is the one file Tugboat writes that Git is meant to see**, because a workflow runs only when it is committed. Tugboat writes it and never commits it. Commit it through the app repo's own review, with whoever owns its CI.
+- **Turning the scan off removes the caller**, and only while it is exactly what Tugboat wrote. A file somebody changed is left alone, and init says so.
+- **Other app repos of the project** get the file at their next `tug init`. Until then their sync report says that the file is missing. Sync itself changes no file Git sees.
+- **With no CI check selected, Tugboat adds no workflow file.**
+
+Two things a person must do in GitHub. Tugboat cannot.
+
+1. **In a team repo made before this release**, add `.github/workflows/secret-scan.yml`. `tug team propose` does not touch workflow files. Copy it from the starter layout.
+2. **In a private team repo**, allow the app repos to call its workflows: Settings, Actions, General, Access. GitHub's documentation notes that this lets people with access to the app repos see the team repo's workflows.
+
+A made-up secret in a test can fail the scan. gitleaks reads a `.gitleaks.toml` in the app repo, where a path or a value can be allowed.
+
+The other two optional CI checks, the guardrail pack and dependency verification, are saved as a choice and have no workflow yet.
 
 ## Proposing a change to the team repo
 

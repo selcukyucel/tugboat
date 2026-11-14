@@ -296,7 +296,9 @@ class LaterInitTests(InitCase):
         out = self.ok(self.ios, "--yes")
         self.assertIn(f"this project needs tug 99.0.0 or newer, and this is {tugboat.__version__}. The profile change was not proposed.", out)
         self.assertEqual(self.proposals(), [self.first])
-        self.assertTrue(self.set_up(self.ios))
+        # That profile selects the CI secret scan, so init wrote the one file Git is meant to see. Nothing else shows.
+        self.assertEqual(self.git(self.ios, "status", "--porcelain"), "?? .github/")
+        self.assertTrue((self.ios / ".tugboat/team/tugboat.json").is_file() and (self.ios / ".claude/rules/tugboat.md").is_file())
 
     def test_another_team_repo_for_a_repo_that_is_set_up_is_refused(self):
         code, _, err = self.init(self.ios, "--yes", "--team-repo", "git@github.com:acme/other-team.git")
