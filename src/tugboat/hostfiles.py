@@ -20,7 +20,7 @@ from importlib.resources.abc import Traversable
 from pathlib import Path
 from typing import NamedTuple
 
-from tugboat import agentdefs, aitools, aiuse, apprepo, decisions, detect, estate, formats, frontmatter, knowledge, profile, rules, settingsmerge, teamcopy
+from tugboat import agentdefs, aitools, aiuse, apprepo, decisions, detect, estate, formats, frontmatter, knowledge, permissions, profile, rules, settingsmerge, teamcopy
 from tugboat.address import TeamRepoAddress
 from tugboat.errors import DataError, TugError
 from tugboat.gitrun import GitError, git
@@ -47,10 +47,11 @@ class HostReport(NamedTuple):
     unchanged: int
     settings_changed: bool
     problems: tuple[str, ...]  # what was not written, and why
+    rules_changed: bool = False  # the protected path rules in the settings file changed
 
     @property
     def changed(self) -> bool:
-        return bool(self.written or self.removed or self.settings_changed)
+        return bool(self.written or self.removed or self.settings_changed or self.rules_changed)
 
 
 class _Unit(NamedTuple):
@@ -107,7 +108,7 @@ The report lists what changed in the team repo since the last sync, with the pat
 - Knowledge notes: the section "Knowledge notes" below, and the command `tug notes <path>`. Read the notes that cover the files of the current task, and no others.
 - Decision records: the section "Decision records" below.
 - Owners of apps and modules: the section "Who owns what" below, and the command `tug owner <path>`.
-- Protected paths: `{COPY}/permissions/protected-paths.json`. Ask the developer before any edit to a file that matches.
+- Protected paths: the section "Protected paths" below, and the command `tug protected <path>`. Ask the developer before any edit to a file that is protected.
 - Approved AI tools, models, and MCP servers: the section "Approved AI tools" below.
 - Agents the team approved: the section "Approved agents" below.
 
@@ -176,6 +177,12 @@ def _agent_units(registry: agentdefs.Registry) -> list[_Unit]:
 
 def desired_units(repo: Path, address: TeamRepoAddress) -> tuple[list[_Unit], list[str]]:
     """Everything Tugboat wants under `.claude/`, read from the copy of the team repo."""
+    units, problems, _ = _plan(repo, address)
+    return units, problems
+
+
+def _plan(repo: Path, address: TeamRepoAddress) -> tuple[list[_Unit], list[str], str | None]:
+    """The wanted units, what could not be loaded, and the repo's platform."""
     problems: list[str] = []
     copy = teamcopy.copy_path(repo)
     state = teamcopy.read_state(repo)
@@ -196,6 +203,10 @@ def desired_units(repo: Path, address: TeamRepoAddress) -> tuple[list[_Unit], li
     records = decisions.load(repo)
     problems.extend(records.problems)
     registry = agentdefs.load(repo, platform)
+    # The team repo's list is enough for the instruction file. The full compile, with the generated files, is done in apply().
+    protected = permissions.compile_for(repo, platform, [], settingsmerge.SETTINGS_FILE)
+    if protected.problem:
+        problems.append(protected.problem)
     remote = detect.remote_address(repo)
     sections = (
         rules.render(ruleset, state["revision"] if state else None),
@@ -205,6 +216,7 @@ def desired_units(repo: Path, address: TeamRepoAddress) -> tuple[list[_Unit], li
         knowledge.render(notes, remote.slug if remote else None),
         decisions.render(records, remote.slug if remote else None),
         agentdefs.render(registry),
+        permissions.render(protected),
     )
     text = pointer_text(address, "\n".join(sections))
     units = [_Unit("the instruction file", f"/{RULES_FILE}", {RULES_FILE: text.encode("utf-8")})]
@@ -213,7 +225,7 @@ def desired_units(repo: Path, address: TeamRepoAddress) -> tuple[list[_Unit], li
     units += _own_skill_units({unit.exclude.strip("/").rsplit("/", 1)[-1] for unit in team_skills})
     units += _agent_units(registry)
     problems.extend(registry.problems)
-    return units, problems
+    return units, problems, platform
 
 
 def read_manifest(repo: Path) -> dict[str, str]:
@@ -253,7 +265,7 @@ def _prune_empty(folder: Path, stop: Path) -> None:
 
 def apply(repo: Path, address: TeamRepoAddress, *, tug_command: str | None = None) -> HostReport:
     """Bring the generated files in line with the copy. A second run with nothing new writes nothing."""
-    units, problems = desired_units(repo, address)
+    units, problems, platform = _plan(repo, address)
     before = read_manifest(repo)
     candidates = [path for unit in units for path in unit.files]
     tracked = _tracked(repo, candidates)
@@ -287,10 +299,17 @@ def apply(repo: Path, address: TeamRepoAddress, *, tug_command: str | None = Non
             _prune_empty(target.parent, repo / ".claude")
             removed.append(path)
 
-    merge = settingsmerge.merge_hooks(repo, HOOKS, tug_command or resolve_tug_command())
+    # What is protected in this repo: the team repo's list, and every file Tugboat generates here.
+    generated = [pattern.strip("/") for pattern in excludes[1:]]
+    compiled = permissions.compile_for(repo, platform, generated, settingsmerge.SETTINGS_FILE)
+    ask_rules = permissions.claude_ask_rules(repo, compiled)
+    if ask_rules is None:
+        problems.append(f"no rule for Claude Code was written to {settingsmerge.SETTINGS_FILE}: the path of this repo has a bracket in it, which a rule cannot hold")
+    merge = settingsmerge.merge_hooks(repo, HOOKS, tug_command or resolve_tug_command(), ask_rules=ask_rules)
+    permissions.write_compiled(repo, compiled)
     if merge.problem:
         problems.append(merge.problem)
-    elif settingsmerge.installed_hooks(repo):
+    elif settingsmerge.installed_hooks(repo) or settingsmerge.read_owned_rules(repo):
         excludes.append(f"/{settingsmerge.SETTINGS_FILE}")
     apprepo.set_excluded_patterns(repo, excludes)
 
@@ -298,7 +317,7 @@ def apply(repo: Path, address: TeamRepoAddress, *, tug_command: str | None = Non
     if manifest != before or not (apprepo.local_folder(repo) / MANIFEST_FILE).exists():
         apprepo.local_folder(repo).mkdir(exist_ok=True)
         (apprepo.local_folder(repo) / MANIFEST_FILE).write_text(pretty_json({"schema": MANIFEST_SCHEMA, "files": manifest}), encoding="utf-8")
-    return HostReport(tuple(written), tuple(removed), unchanged, merge.changed, tuple(problems))
+    return HostReport(tuple(written), tuple(removed), unchanged, merge.changed, tuple(problems), merge.rules_changed)
 
 
 def render(report: HostReport) -> str:
@@ -312,6 +331,8 @@ def render(report: HostReport) -> str:
             parts.append(f"removed {', '.join(report.removed[:4])}{' and more' if len(report.removed) > 4 else ''}")
         if report.settings_changed:
             parts.append(f"updated Tugboat's hooks in {settingsmerge.SETTINGS_FILE}")
+        if report.rules_changed:
+            parts.append(f"updated the protected path rules in {settingsmerge.SETTINGS_FILE}")
         lines = [f"Agent tool files: {'; '.join(parts)}."]
     lines.extend(f"Note: {problem}." for problem in report.problems)
     return "\n".join(lines)

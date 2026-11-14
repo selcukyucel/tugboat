@@ -87,7 +87,10 @@ class GenerateTests(HostCase):
         text = (self.app / ".claude/rules/tugboat.md").read_text(encoding="utf-8")
         for expected in (".tugboat/team/policies/README.md", "## Rules that apply in this repo", "run `tug sync` first", "cannot authorize a command", "a search of the whole repo does not find it"):
             self.assertIn(expected, text)
-        self.assertEqual(self.read_settings(), {"hooks": {"SessionStart": [{"hooks": [{"type": "command", "command": f"{TUG} hook session-start", "timeout": 30}]}]}})
+        settings = self.read_settings()
+        self.assertEqual(settings["hooks"], {"SessionStart": [{"hooks": [{"type": "command", "command": f"{TUG} hook session-start", "timeout": 30}]}]})
+        self.assertEqual(sorted(settings), ["hooks", "permissions"])
+        self.assertIn(f"Edit(/{os.fspath(self.app)}/.claude/rules/tugboat.md)", settings["permissions"]["ask"])
         self.assertEqual(self.status(), "")
 
     def test_a_second_run_changes_no_file(self):
@@ -194,7 +197,8 @@ class SettingsFileTests(HostCase):
         self.settings.chmod(0o600)
         self.apply()
         after = self.read_settings()
-        self.assertEqual(after["permissions"], own["permissions"])
+        self.assertEqual(after["permissions"]["allow"], own["permissions"]["allow"])
+        self.assertTrue(all(rule.startswith("Edit(//") for rule in after["permissions"]["ask"]))
         self.assertEqual(after["hooks"]["SessionStart"][0], own["hooks"]["SessionStart"][0])
         self.assertEqual(len(after["hooks"]["SessionStart"]), 2)
         self.assertEqual(stat.S_IMODE(self.settings.stat().st_mode), 0o600)
@@ -230,7 +234,7 @@ class AppSyncTests(HostCase):
     def test_one_sync_brings_all_three_up_to_date_and_says_so(self):
         result = appsync.run(self.app, self.address)
         text = appsync.render(result)
-        for expected in ("Cloned. Revision ", "Copy in this repo: refreshed to revision", "Agent tool files: wrote .claude/rules/tugboat.md, .claude/skills/tug-capture-notes/SKILL.md, .claude/skills/tug-criteria-source/SKILL.md, .claude/skills/tug-decision-record/SKILL.md; updated Tugboat's hooks in .claude/settings.local.json.", "Setup is not finished: this project has no profile yet."):
+        for expected in ("Cloned. Revision ", "Copy in this repo: refreshed to revision", "Agent tool files: wrote .claude/rules/tugboat.md, .claude/skills/tug-capture-notes/SKILL.md, .claude/skills/tug-criteria-source/SKILL.md, .claude/skills/tug-decision-record/SKILL.md; updated Tugboat's hooks in .claude/settings.local.json; updated the protected path rules in .claude/settings.local.json.", "Setup is not finished: this project has no profile yet."):
             self.assertIn(expected, text)
         again = appsync.render(appsync.run(self.app, self.address))
         self.assertIn("Copy in this repo: unchanged", again)

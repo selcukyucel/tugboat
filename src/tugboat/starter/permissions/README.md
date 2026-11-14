@@ -14,6 +14,10 @@ Files the agent must not edit without asking. Each entry has:
 
 Tugboat always protects its own generated files as well. They are not listed here.
 
+At every sync Tugboat compiles this list for each app repo: the entries for `any` and for the repo's own platform.
+Claude Code gets a rule that makes it ask the developer before it edits a protected file. Every agent tool gets the list in its instruction file, and `tug protected <path>` answers for one path.
+A new entry is in force after the next sync. Nothing is committed in the app repo.
+
 ## `ai-tools.json`
 
 The register of approved AI tools. It has three groups:

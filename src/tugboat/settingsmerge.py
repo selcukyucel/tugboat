@@ -24,6 +24,9 @@ from tugboat.gitrun import GitError, git
 from tugboat.strict_json import parse_json
 
 SETTINGS_FILE = ".claude/settings.local.json"
+# The permission rules Tugboat itself put into the settings file, so it can take exactly those out again.
+RULES_RECORD = ".tugboat/settings-rules.json"
+RULES_SCHEMA = "tug.settings-rules/1"
 MAX_BYTES = 1024 * 1024
 
 
@@ -34,8 +37,9 @@ class HookSpec(NamedTuple):
 
 
 class MergeResult(NamedTuple):
-    changed: bool
+    changed: bool  # Tugboat's hooks in the file changed
     problem: str | None  # why the file was left alone
+    rules_changed: bool = False  # Tugboat's permission rules in the file changed
 
 
 def hook_command(tug_command: str, spec: HookSpec) -> str:
@@ -79,6 +83,54 @@ def _without_tugboat(hooks: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
+def with_ask_rules(settings: dict[str, Any], rules: list[str], previous: list[str]) -> tuple[dict[str, Any], list[str]]:
+    """The settings with Tugboat's "ask" rules set to `rules`. Returns them with the rules Tugboat owns now.
+
+    `previous` are the rules Tugboat added last time. Only those are taken
+    out. A rule the developer wrote stays, and when it equals one of
+    Tugboat's it is not added twice and Tugboat does not count it as its own.
+    """
+    result = copy.deepcopy(settings)
+    permissions = result.get("permissions", {})
+    if not isinstance(permissions, dict):
+        raise DataError('its "permissions" value is not an object')
+    ask = permissions.get("ask", [])
+    if not isinstance(ask, list):
+        raise DataError('its "permissions.ask" value is not a list')
+    ours_before = set(previous)
+    kept = [rule for rule in ask if rule not in ours_before]
+    added = [rule for rule in rules if rule not in kept]
+    if kept or added:
+        permissions["ask"] = kept + added
+    else:
+        permissions.pop("ask", None)
+    if permissions:
+        result["permissions"] = permissions
+    else:
+        result.pop("permissions", None)
+    return result, added
+
+
+def read_owned_rules(repo: Path) -> list[str]:
+    """The "ask" rules Tugboat added to the settings file last time."""
+    try:
+        data = parse_json((repo / RULES_RECORD).read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, DataError):
+        return []
+    rules = data.get("ask") if isinstance(data, dict) and data.get("schema") == RULES_SCHEMA else None
+    return [rule for rule in rules if isinstance(rule, str)] if isinstance(rules, list) else []
+
+
+def _write_owned_rules(repo: Path, rules: list[str]) -> None:
+    file = repo / RULES_RECORD
+    if not rules:
+        with contextlib.suppress(OSError):
+            file.unlink()
+        return
+    file.parent.mkdir(parents=True, exist_ok=True)
+    file.write_text(json.dumps({"schema": RULES_SCHEMA, "ask": rules}, indent=2) + "\n", encoding="utf-8")
+
+
 def merged_settings(settings: dict[str, Any], specs: list[HookSpec], tug_command: str) -> dict[str, Any]:
     """The settings with Tugboat's hooks set to exactly `specs`. The input is not changed."""
     result = copy.deepcopy(settings)
@@ -106,8 +158,11 @@ def _is_tracked(repo: Path, path: str) -> bool:
         return False
 
 
-def merge_hooks(repo: Path, specs: list[HookSpec], tug_command: str) -> MergeResult:
-    """Set Tugboat's hooks in the local settings file. An empty list removes them."""
+def merge_hooks(repo: Path, specs: list[HookSpec], tug_command: str, ask_rules: list[str] | None = None) -> MergeResult:
+    """Set Tugboat's hooks, and its "ask" rules, in the local settings file. An empty list removes them.
+
+    With `ask_rules` left out, the permission rules in the file are not touched.
+    """
     file = repo / SETTINGS_FILE
     if _is_tracked(repo, SETTINGS_FILE):
         return MergeResult(False, f"{SETTINGS_FILE} is tracked by Git in this repo, so Tugboat did not change it")
@@ -124,11 +179,19 @@ def merge_hooks(repo: Path, specs: list[HookSpec], tug_command: str) -> MergeRes
             settings = parsed
         except (OSError, UnicodeDecodeError, DataError) as error:
             return MergeResult(False, f"{SETTINGS_FILE} could not be read as settings ({error}), so Tugboat did not change it")
+    owned_before = read_owned_rules(repo)
+    owned = owned_before
     try:
         wanted = merged_settings(settings, specs, tug_command)
+        hooks_changed = wanted != settings
+        if ask_rules is not None:
+            wanted, owned = with_ask_rules(wanted, ask_rules, owned_before)
     except DataError as error:
         return MergeResult(False, f"{SETTINGS_FILE} was left alone because {error}")
+    rules_changed = owned != owned_before
     if wanted == settings:
+        if rules_changed:
+            _write_owned_rules(repo, owned)
         return MergeResult(False, None)
     if not wanted and not existed:
         return MergeResult(False, None)
@@ -144,7 +207,9 @@ def merge_hooks(repo: Path, specs: list[HookSpec], tug_command: str) -> MergeRes
         with contextlib.suppress(OSError):
             os.unlink(temporary)
         raise
-    return MergeResult(True, None)
+    if rules_changed:
+        _write_owned_rules(repo, owned)
+    return MergeResult(hooks_changed, None, rules_changed)
 
 
 def installed_hooks(repo: Path) -> list[str]:

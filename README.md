@@ -22,7 +22,7 @@ Tugboat uses only the Python standard library. It has no third-party package at 
 ## Install
 
 ```sh
-uv tool install git+https://github.com/selcukyucel/tugboat@v0.20.0
+uv tool install git+https://github.com/selcukyucel/tugboat@v0.21.0
 tug version
 ```
 
@@ -68,6 +68,7 @@ One machine can serve several projects. Each project's minimum is checked in tha
 | `tug notes [path...]` | Names the knowledge notes that cover a file or folder in an app repo | Works |
 | `tug capture status`, `accept`, `drop`, `propose` | Keeps the notes an agent drafted, records the developer's decision on each, and proposes the accepted ones in one pull request | Works. Not yet run in an agent session. |
 | `tug decision status`, `propose` | Lists the decision records an agent drafted, and proposes them as a pull request | Works. Not yet run in an agent session. |
+| `tug protected [path...]` | Says whether a file or folder in an app repo is a protected path, and why | Works |
 | `tug status` | Prints the session brief | Not built yet |
 | `tug doctor` | Checks that this machine and repo are ready | Not built yet |
 | `tug update` | Updates `tug` to the newest release | Works |
@@ -364,6 +365,39 @@ The instructions the agent follows.
 - Its `rules` list is empty on purpose: it applies every adopted rule of the repo it runs in.
 
 Whether an agent tool enforces the `tools` list is up to that tool. The automatic run of the reviewer after each change is not built yet. Today a developer or the main agent calls it.
+
+## Protected paths
+
+Some files an agent must not change without asking: signing files, CI workflows, release automation. The team repo holds one list of them, `permissions/protected-paths.json`. Each entry has a path pattern, a platform (`ios`, `android`, or `any`), and a reason. A change to the list is a pull request in the team repo.
+
+**Sync compiles the list for each app repo.** Nothing is committed in the app repo, so a new protected path needs no app repo pull request. It is in force after the next sync.
+
+| What sync writes | For | What it does |
+|---|---|---|
+| `.tugboat/permissions.json` | Every agent tool | The paths protected in this repo, with the reason for each: the team repo's entries for the repo's platform, and Tugboat's own files |
+| "ask" rules in `.claude/settings.local.json` | Claude Code | Claude Code asks the developer before it edits a protected file |
+| A section in the instruction file | Every agent tool | The agent is told to ask before it changes a protected file, and not to get around it with a shell command |
+
+```sh
+tug protected Signing/dist.p12 Sources/App.swift
+# Signing/dist.p12: protected by **/*.p12 (from the team repo). Signing certificates must not be changed by an agent. Ask the developer before changing it.
+# Sources/App.swift: not protected.
+```
+
+- **Tugboat's own files are always protected**: the copy of the team repo, its records under `.tugboat/`, the files it generated under `.claude/`, and `.claude/settings.local.json`. The draft folder `.tugboat/capture/` is not, because the capture skills write there.
+- **The rules in the settings file are Tugboat's own.** It records which rules it added and takes only those out again. A rule or an approval the developer wrote stays where it is.
+- **A rule names the full path on the machine.** Claude Code reads a short rule from the folder the session started in, which need not be the top of the repo.
+- **A broken list takes no protection away.** When the team repo's file cannot be read, the entries of the last good compile stay in force and the sync report says so.
+- **A repo whose platform is not known yet** gets the entries of both platforms.
+
+**What is enforced where, today:**
+
+| Agent tool | Protection |
+|---|---|
+| Claude Code | The "ask" rule. Claude Code's documentation says such a rule holds in every permission mode. In a run with nobody to answer, the edit is refused. |
+| Copilot CLI and Copilot in VS Code | The instruction only. Copilot takes no allow or deny rule for tools from a file in the repo. The hook that checks an action before the agent takes it is not built yet. It will read the same compiled file. |
+
+The rule covers the tools that edit files. A shell command that writes a file by another route, such as a script, is not covered by it. That is also the hook's job.
 
 ## Proposing a change to the team repo
 

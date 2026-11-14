@@ -375,6 +375,40 @@ def _decision(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _configure_protected(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("paths", nargs="*", metavar="PATH", help="a file or a folder in this app repo. It need not exist yet. With no path, every protected pattern is listed.")
+
+
+def _protected(args: argparse.Namespace) -> int:
+    from tugboat import apprepo, estate, permissions, teamcopy
+
+    repo = apprepo.find_app_repo(".")
+    if teamcopy.read_state(repo) is None:
+        raise TugError("this folder is not set up with Tugboat. Run `tug init` inside the app repo first.")
+    compiled = permissions.read_compiled(repo)
+    if compiled is None:
+        raise TugError(f"no list of protected paths is compiled for this repo yet ({permissions.COMPILED}). Run `tug sync` first.")
+    source = {permissions.TEAM: "from the team repo", permissions.OWN: "one of Tugboat's own files"}
+    if not args.paths:
+        for entry in compiled.protected:
+            print(f"- {entry.pattern} ({source[entry.source]}): {entry.reason}")
+        return EXIT_OK
+    failed = False
+    for given in args.paths:
+        try:
+            path = estate.repo_path(repo, given)
+        except TugError as error:
+            print(f"{given}: {error}")
+            failed = True
+            continue
+        found = permissions.match(compiled, path)
+        if found is None:
+            print(f"{path}: not protected.")
+        else:
+            print(f"{path}: protected by {found.pattern} ({source[found.source]}). {found.reason} Ask the developer before changing it.")
+    return EXIT_ERROR if failed else EXIT_OK
+
+
 def _team_repo_of(option: str | None):  # noqa: ANN202 - the address type is imported late
     """The team repo a command works on: the one given, or the one this app repo is set up for."""
     from tugboat import apprepo, teamcopy
@@ -519,6 +553,7 @@ COMMANDS: tuple[Command, ...] = (
     Command("notes", "Name the knowledge notes that cover a file or folder in this app repo", _notes, _configure_notes),
     Command("capture", "Keep, accept, drop, and propose the notes an agent drafted: `tug capture status`, `accept`, `drop`, `propose`", _capture, _configure_capture),
     Command("decision", "List and propose the decision records an agent drafted: `tug decision status`, `propose`", _decision, _configure_decision),
+    Command("protected", "Say whether a file or folder in this app repo is a protected path, and why", _protected, _configure_protected),
     Command("status", "Print the session brief"),
     Command("doctor", "Check that this machine and repo are ready"),
     Command("update", "Update tug to the newest release", _update, _configure_update),
