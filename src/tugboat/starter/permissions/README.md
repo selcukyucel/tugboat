@@ -2,6 +2,8 @@
 
 Two files. Tugboat turns them into the settings and checks each agent tool obeys. A change here needs a pull request.
 
+A third file, `hook-limits.md`, says what those checks cannot do. Read it before you rely on them.
+
 ## `protected-paths.json`
 
 Files the agent must not edit without asking. Each entry has:

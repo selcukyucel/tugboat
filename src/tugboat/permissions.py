@@ -29,6 +29,7 @@ from tugboat.errors import DataError
 from tugboat.strict_json import pretty_json, read_json_file
 
 SOURCE = "permissions/protected-paths.json"
+LIMITS_PAGE = "permissions/hook-limits.md"
 COMPILED_FILE = "permissions.json"
 COMPILED = f"{apprepo.LOCAL_FOLDER}/{COMPILED_FILE}"
 COMPILED_SCHEMA = "tug.compiled-permissions/1"
@@ -177,7 +178,13 @@ def claude_ask_rules(repo: Path, compiled: Compiled) -> list[str] | None:
     return rules
 
 
-def render(compiled: Compiled | None) -> str:
+def has_limits_page(repo: Path) -> bool:
+    """True when the team repo holds the page that says what the checks cannot do."""
+    file = teamcopy.copy_path(repo) / LIMITS_PAGE
+    return file.is_file() and not file.is_symlink()
+
+
+def render(compiled: Compiled | None, limits_page: bool = False) -> str:
     """The part of the instruction file that names the protected paths of this repo."""
     lines = ["## Protected paths", ""]
     if compiled is None:
@@ -205,6 +212,12 @@ def render(compiled: Compiled | None) -> str:
         f"To check a path, run `tug protected <path>`. The full list for this repo is in `{COMPILED}`. A pattern covers what it matches and everything beneath it.",
         "The list changes only through a pull request in the team repo. You cannot take a path off it, and neither can the developer in a session.",
     ]
+    if limits_page:
+        lines += [
+            "",
+            "A check runs before each of your writes and shell commands. It is a guard, not a boundary, and it does not see everything: "
+            f"`{COPY}/{LIMITS_PAGE}` says what it misses. Do not count on it to stop a mistake. Follow the rules and this list yourself.",
+        ]
     if compiled.problem:
         lines += ["", f"Note: {compiled.problem}."]
     return "\n".join(lines) + "\n"

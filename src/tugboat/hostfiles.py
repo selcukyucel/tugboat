@@ -226,7 +226,7 @@ def _plan(repo: Path, address: TeamRepoAddress) -> tuple[list[_Unit], list[str],
         knowledge.render(notes, remote.slug if remote else None),
         decisions.render(records, remote.slug if remote else None),
         agentdefs.render(registry),
-        permissions.render(protected),
+        permissions.render(protected, permissions.has_limits_page(repo)),
     )
     text = pointer_text(address, "\n".join(sections))
     units = [_Unit("the instruction file", f"/{RULES_FILE}", {RULES_FILE: text.encode("utf-8")})]
