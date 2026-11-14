@@ -342,6 +342,39 @@ def _capture(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _configure_decision(parser: argparse.ArgumentParser) -> None:
+    actions = parser.add_subparsers(dest="action", metavar="ACTION", required=True)
+    actions.add_parser("status", help="list the draft decision records and the next free ID", description="List the draft decision records in this app repo, and the next free ID.")
+    propose = actions.add_parser("propose", help="open one pull request with draft records", description="Open one pull request in the team repo with the named draft records. Nothing is merged: a person reviews and merges it in GitHub.")
+    propose.add_argument("names", nargs="+", metavar="NAME", help="a draft, named by its file name, such as DEC-0003-use-swift-testing.md")
+    propose.add_argument("--yes", action="store_true", help="open the pull request without being asked")
+
+
+def _decision(args: argparse.Namespace) -> int:
+    from tugboat import apprepo, decisions, detect, teamcopy, teampr
+    from tugboat.address import parse_team_repo_address
+
+    repo = apprepo.find_app_repo(".")
+    state = teamcopy.read_state(repo)
+    if state is None:
+        raise TugError("this folder is not set up with Tugboat. Run `tug init` inside the app repo first.")
+    remote = detect.remote_address(repo)
+    github = remote.slug if remote else None
+    if args.action == "status":
+        print(decisions.render_status(repo, decisions.scan(repo, github)))
+        return EXIT_OK
+    address = parse_team_repo_address(state["team_repo"])
+    if not args.yes:
+        print(f"This opens one pull request in {address.slug} with: {', '.join(args.names)}")
+        if not sys.stdin.isatty():
+            raise TugError("a pull request needs a person to confirm it. Run this in a terminal, or pass --yes. Nothing was proposed.")
+        if input("Open this pull request? [y/N] ").strip().lower() not in {"y", "yes"}:
+            raise TugError("stopped. Nothing was proposed.")
+    proposal, _ = decisions.propose(repo, github, address, args.names)
+    print(teampr.render(proposal))
+    return EXIT_OK
+
+
 def _team_repo_of(option: str | None):  # noqa: ANN202 - the address type is imported late
     """The team repo a command works on: the one given, or the one this app repo is set up for."""
     from tugboat import apprepo, teamcopy
@@ -485,6 +518,7 @@ COMMANDS: tuple[Command, ...] = (
     Command("owner", "Name the owner of a file or folder in this app repo, from the estate map", _owner, _configure_owner),
     Command("notes", "Name the knowledge notes that cover a file or folder in this app repo", _notes, _configure_notes),
     Command("capture", "Keep, accept, drop, and propose the notes an agent drafted: `tug capture status`, `accept`, `drop`, `propose`", _capture, _configure_capture),
+    Command("decision", "List and propose the decision records an agent drafted: `tug decision status`, `propose`", _decision, _configure_decision),
     Command("status", "Print the session brief"),
     Command("doctor", "Check that this machine and repo are ready"),
     Command("update", "Update tug to the newest release", _update, _configure_update),

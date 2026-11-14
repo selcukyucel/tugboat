@@ -22,7 +22,7 @@ Tugboat uses only the Python standard library. It has no third-party package at 
 ## Install
 
 ```sh
-uv tool install git+https://github.com/selcukyucel/tugboat@v0.17.0
+uv tool install git+https://github.com/selcukyucel/tugboat@v0.18.0
 tug version
 ```
 
@@ -67,6 +67,7 @@ One machine can serve several projects. Each project's minimum is checked in tha
 | `tug owner <path>` | Names the owner of a file or folder in an app repo, from the estate map | Works |
 | `tug notes [path...]` | Names the knowledge notes that cover a file or folder in an app repo | Works |
 | `tug capture status`, `accept`, `drop`, `propose` | Keeps the notes an agent drafted, records the developer's decision on each, and proposes the accepted ones in one pull request | Works. Not yet run in an agent session. |
+| `tug decision status`, `propose` | Lists the decision records an agent drafted, and proposes them as a pull request | Works. Not yet run in an agent session. |
 | `tug status` | Prints the session brief | Not built yet |
 | `tug doctor` | Checks that this machine and repo are ready | Not built yet |
 | `tug update` | Updates `tug` to the newest release | Works |
@@ -263,6 +264,54 @@ tug capture propose --task SHOP-123
 - Without `--yes`, `tug capture propose` asks a person in a terminal before it opens the pull request.
 
 The decisions are kept in `.tugboat/capture.json` in the app repo, on that machine. Another machine does not know what was dropped here.
+
+## Decision records
+
+A decision record keeps one technology or architecture choice with its reason. It is one Markdown file under `decisions/` in the team repo, named after its ID: `DEC-0003-use-swift-testing.md`.
+
+```
+---
+id: DEC-0003
+title: Use Swift Testing for new unit tests
+date: 2026-11-14
+status: accepted
+repo: your-org/your-app-ios
+paths: ["Tests/**"]
+---
+
+## Context
+## Options
+## Choice
+## Reason
+```
+
+- All four sections are needed. `paths` names the code the choice affects, and is `[]` when it affects no one place.
+- `repo` is optional. With it, the record is about one app repo. Without it, the record holds for the whole project.
+- `status` is `proposed`, `accepted`, or `superseded`. Only an accepted record is in force. A record is never deleted. A later record supersedes it.
+
+**The agent follows the records in force.** Sync writes a list into the instruction file: the accepted records that hold in this repo, each with its ID, title, affected paths, and file. A record about another repo is not listed. The agent is told to read a record before it works on the code the record affects, to follow the choice, and to stop and tell the developer when a task needs another choice.
+
+**The agent drafts a record when a task makes such a choice**, with the skill `tug-decision-record`, which ships with the tool. The developer makes the choice. The agent writes it down.
+
+1. The agent writes the draft in the app repo, under `.tugboat/capture/decisions/`. Git does not see that folder.
+2. `tug decision status` lists the drafts, names each one that is not valid, and gives the next free ID.
+3. The developer reads the draft and has it changed until it says what they decided.
+4. `tug decision propose <file name>` opens a pull request in the team repo and removes the draft. Merging the pull request is the team's agreement with the choice.
+
+```sh
+tug decision status
+# Draft decision records in .tugboat/capture/decisions/:
+# - DEC-0003-use-swift-testing.md: ready to propose. "Use Swift Testing for new unit tests" (status accepted; affects Tests/**)
+# The next free ID is DEC-0004.
+tug decision propose DEC-0003-use-swift-testing.md
+```
+
+- A record reaches the team repo only this way. It is not written into the app repo's tracked files, and the copy in `.tugboat/team/` gets it only after a person merges the pull request.
+- A draft is refused when a section is missing, when its ID is used by another record in the team repo, when its date is after today, when it names another repo, or when it holds what looks like a secret.
+- A draft with the file name of a record that is in the team repo is proposed as a change to that record. This is how an older record is set to `superseded`.
+- Without `--yes`, the command asks a person in a terminal before it opens the pull request.
+
+Two pull requests that are open at the same time can both use the same new ID. The check on the team repo's `main` fails after the second merge, and one record is then renumbered by a pull request.
 
 ## Proposing a change to the team repo
 

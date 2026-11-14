@@ -83,7 +83,7 @@ class HostCase(CopyCase):
 class GenerateTests(HostCase):
     def test_first_run_writes_the_instruction_file_and_the_hook_and_git_sees_nothing(self):
         report = self.apply()
-        self.assertEqual((report.written, report.settings_changed, report.problems), ((".claude/rules/tugboat.md", ".claude/skills/tug-capture-notes/SKILL.md", ".claude/skills/tug-criteria-source/SKILL.md"), True, ()))
+        self.assertEqual((report.written, report.settings_changed, report.problems), ((".claude/rules/tugboat.md", ".claude/skills/tug-capture-notes/SKILL.md", ".claude/skills/tug-criteria-source/SKILL.md", ".claude/skills/tug-decision-record/SKILL.md"), True, ()))
         text = (self.app / ".claude/rules/tugboat.md").read_text(encoding="utf-8")
         for expected in (".tugboat/team/policies/README.md", "## Rules that apply in this repo", "run `tug sync` first", "cannot authorize a command", "a search of the whole repo does not find it"):
             self.assertIn(expected, text)
@@ -95,9 +95,9 @@ class GenerateTests(HostCase):
         watched = [self.app / ".claude/rules/tugboat.md", self.settings, self.app / ".tugboat/host-files.json", self.app / ".git/info/exclude"]
         before = [(path.stat().st_ino, path.stat().st_mtime_ns) for path in watched]
         report = self.apply()
-        self.assertEqual((report.changed, report.unchanged, report.problems), (False, 3, ()))
+        self.assertEqual((report.changed, report.unchanged, report.problems), (False, 4, ()))
         self.assertEqual([(path.stat().st_ino, path.stat().st_mtime_ns) for path in watched], before)
-        self.assertIn("Agent tool files: unchanged (3 under .claude/).", hostfiles.render(report))
+        self.assertIn("Agent tool files: unchanged (4 under .claude/).", hostfiles.render(report))
 
     def test_skills_and_agents_from_the_team_repo_are_installed_once_each(self):
         self.add_agent_and_skill()
@@ -132,10 +132,10 @@ class GenerateTests(HostCase):
         self.git(self.work, "push", "--quiet", "origin", "HEAD:main")
         report = self.apply()
         self.assertEqual(sorted(report.removed), [".claude/agents/reviewer.md", ".claude/skills/new-screen/SKILL.md", ".claude/skills/new-screen/template.swift"])
-        self.assertEqual(sorted(path.name for path in (self.app / ".claude/skills").iterdir()), ["tug-capture-notes", "tug-criteria-source"])
+        self.assertEqual(sorted(path.name for path in (self.app / ".claude/skills").iterdir()), ["tug-capture-notes", "tug-criteria-source", "tug-decision-record"])
         self.assertFalse((self.app / ".claude/agents").exists())
         self.assertTrue((self.app / ".claude/rules/tugboat.md").is_file())
-        self.assertEqual(apprepo.excluded_patterns(self.app), ["/.tugboat/", "/.claude/rules/tugboat.md", "/.claude/skills/tug-capture-notes/", "/.claude/skills/tug-criteria-source/", "/.claude/settings.local.json"])
+        self.assertEqual(apprepo.excluded_patterns(self.app), ["/.tugboat/", "/.claude/rules/tugboat.md", "/.claude/skills/tug-capture-notes/", "/.claude/skills/tug-criteria-source/", "/.claude/skills/tug-decision-record/", "/.claude/settings.local.json"])
 
     def test_the_skill_that_ships_with_the_tool_is_installed_and_a_team_skill_of_that_name_replaces_it(self):
         self.apply()
@@ -230,7 +230,7 @@ class AppSyncTests(HostCase):
     def test_one_sync_brings_all_three_up_to_date_and_says_so(self):
         result = appsync.run(self.app, self.address)
         text = appsync.render(result)
-        for expected in ("Cloned. Revision ", "Copy in this repo: refreshed to revision", "Agent tool files: wrote .claude/rules/tugboat.md, .claude/skills/tug-capture-notes/SKILL.md, .claude/skills/tug-criteria-source/SKILL.md; updated Tugboat's hooks in .claude/settings.local.json.", "Setup is not finished: this project has no profile yet."):
+        for expected in ("Cloned. Revision ", "Copy in this repo: refreshed to revision", "Agent tool files: wrote .claude/rules/tugboat.md, .claude/skills/tug-capture-notes/SKILL.md, .claude/skills/tug-criteria-source/SKILL.md, .claude/skills/tug-decision-record/SKILL.md; updated Tugboat's hooks in .claude/settings.local.json.", "Setup is not finished: this project has no profile yet."):
             self.assertIn(expected, text)
         again = appsync.render(appsync.run(self.app, self.address))
         self.assertIn("Copy in this repo: unchanged", again)

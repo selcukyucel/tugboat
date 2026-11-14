@@ -239,7 +239,7 @@ class AgentTests(CaptureCase):
     def test_the_agent_gets_the_skill_and_is_told_not_to_stop_the_work_for_a_note(self):
         text = (self.ios / ".claude/rules/tugboat.md").read_text(encoding="utf-8")
         self.assertIn("Do not stop the work to write a note. When the developer asks to capture what was learned, use the skill `tug-capture-notes`", text)
-        self.assertIn("The one exception is `.tugboat/capture/`, where the skill `tug-capture-notes` keeps draft notes.", text)
+        self.assertIn("The one exception is `.tugboat/capture/`, where the skills `tug-capture-notes` and `tug-decision-record` keep drafts.", text)
         skill = (self.ios / ".claude/skills/tug-capture-notes/SKILL.md").read_text(encoding="utf-8")
         fields, body = frontmatter.parse(skill)
         self.assertEqual(formats.validate_skill_header(fields)["name"], "tug-capture-notes")

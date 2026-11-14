@@ -59,7 +59,7 @@ _TOOL_NAME = re.compile(r"^[A-Za-z][A-Za-z0-9_.:*()-]{0,99}$")
 _BRANCH = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,99}$")
 _HOST = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$")
 _COMMAND_WORD = re.compile(r"^[@A-Za-z0-9][A-Za-z0-9@/._+-]{0,99}$")
-_SECRET_ADVICE = "Take it out of the note. If it is a real secret, replace it where it is used too, because Git keeps what was pushed."
+_SECRET_ADVICE = "Take it out. If it is a real secret, replace it where it is used too, because Git keeps what was pushed."
 
 
 def _schema(data: Mapping[str, Any], expected: str, label: str) -> None:
@@ -330,9 +330,13 @@ def validate_note(fields: Mapping[str, Any], body: str) -> dict[str, Any]:
 
 
 def validate_decision(fields: Mapping[str, Any], body: str) -> dict[str, Any]:
-    """decisions/DEC-NNNN-*.md: one technology or architecture choice."""
+    """decisions/DEC-NNNN-*.md: one technology or architecture choice.
+
+    `repo` is optional. With it, the record and its paths are about one app
+    repo. Without it, the record holds for the whole project.
+    """
     label = "decision record"
-    require_exact_fields(fields, required=frozenset({"id", "title", "date", "status", "paths"}), label=label)
+    require_exact_fields(fields, required=frozenset({"id", "title", "date", "status", "paths"}), optional=frozenset({"repo"}), label=label)
     decision_id = require_text(fields["id"], "decision record id", 20)
     if not _DECISION_ID.fullmatch(decision_id):
         raise DataError("decision record id must look like DEC-0001")
@@ -345,12 +349,17 @@ def validate_decision(fields: Mapping[str, Any], body: str) -> dict[str, Any]:
         validate_glob(item, "decision record paths item")
         for item in require_list(fields["paths"], "decision record paths", maximum=50)
     ]
+    title = require_text(fields["title"], "decision record title", 150)
+    found = secretscan.find(f"{title}\n{text}")
+    if found:
+        raise DataError(f"decision record holds what looks like a secret ({found[0].kind}). {_SECRET_ADVICE}")
     return {
         "id": decision_id,
-        "title": require_text(fields["title"], "decision record title", 150),
+        "title": title,
         "date": validate_date(fields["date"], "decision record date"),
         "status": require_choice(fields["status"], "decision record status", DECISION_STATUSES),
         "paths": require_unique(paths, "decision record paths"),
+        "repo": validate_repo_ref(fields["repo"], "decision record repo") if "repo" in fields else None,
         "text": text,
     }
 

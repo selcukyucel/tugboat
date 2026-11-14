@@ -170,6 +170,8 @@ def check_team_repo(root: str | os.PathLike[str]) -> Report:
         decision = check.markdown(path, formats.validate_decision)
         if decision is None:
             continue
+        if decision["repo"] and registered_repos is not None and decision["repo"].lower() not in registered_repos:
+            check.warning(path, f"is about the repo {decision['repo']}, which is not in the project profile. No agent will get it.")
         if not path.name.startswith(decision["id"]):
             check.error(path, f"must have a file name that starts with {decision['id']}")
         if decision["id"] in decision_ids:
