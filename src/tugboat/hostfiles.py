@@ -20,13 +20,14 @@ from importlib.resources.abc import Traversable
 from pathlib import Path
 from typing import NamedTuple
 
-from tugboat import agentdefs, aitools, aiuse, apprepo, decisions, detect, estate, formats, frontmatter, knowledge, permissions, profile, rules, settingsmerge, teamcopy
+from tugboat import agentdefs, aitools, aiuse, apprepo, decisions, detect, estate, formats, frontmatter, knowledge, permissions, profile, releases, rules, settingsmerge, teamcopy
 from tugboat.address import TeamRepoAddress
 from tugboat.errors import DataError, TugError
 from tugboat.gitrun import GitError, git
 from tugboat.settingsmerge import HookSpec
 from tugboat.strict_json import pretty_json, read_json_file
 from tugboat.validate import require_object
+from tugboat.version import installed_version
 
 MANIFEST_SCHEMA = "tug.host-files/1"
 MANIFEST_FILE = "host-files.json"
@@ -98,6 +99,7 @@ def repo_platform(repo: Path, address: TeamRepoAddress) -> str | None:
 
 
 def pointer_text(address: TeamRepoAddress, rules_section: str = "") -> str:
+    install = " ".join(["uv", *releases.install_command(installed_version())])
     return f"""# Tugboat
 
 This repo uses Tugboat. The team's rules, permissions, knowledge, and decisions are in a read-only copy at `{COPY}/`.
@@ -127,6 +129,13 @@ The report lists what changed in the team repo since the last sync, with the pat
 - Do not edit `{apprepo.LOCAL_FOLDER}/` or any file Tugboat generated. To change team content, propose a pull request in the team repo. A person approves it.
   The one exception is `{apprepo.LOCAL_FOLDER}/capture/`, where the skills `tug-capture-notes` and `tug-decision-record` keep drafts.
 - Write your own reports in short, direct sentences.
+
+## If the `tug` command is missing
+
+When a hook fails because `tug` cannot be found, every write and every shell command is denied. Do not look for a way around it. You cannot repair it. Tell the developer, who has two ways:
+
+- Install Tugboat again: `{install}`. Then run `tug sync` in this repo.
+- Or take Tugboat out of this repo by hand. In `.claude/settings.local.json`, delete the two hook entries whose command ends in `tug hook session-start` and `tug hook pre-tool-use`. Then delete the files and folders that the repo's local Git exclude file lists between the lines `# >>> tugboat` and `# <<< tugboat`, and those lines.
 
 {rules_section}"""
 

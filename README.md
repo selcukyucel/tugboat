@@ -14,21 +14,81 @@ A command that is not written yet is listed and answers "not built yet". Nothing
 ## Requirements
 
 - macOS
-- Git
+- Git, and access to GitHub that needs no typing. Tugboat never lets Git wait for a password, because it also runs where nobody can answer. So an SSH key, or an HTTPS sign-in that Git has saved, must already work for the app repo and for the team repo.
 - [uv](https://docs.astral.sh/uv/). uv fetches a suitable Python when the machine has none. Tugboat needs Python 3.11 or newer.
+- At least one of the agent tools: Claude Code 2.1.295 or newer, GitHub Copilot CLI, or GitHub Copilot in VS Code.
+- Optional: the GitHub command `gh`, signed in. Tugboat uses it to open pull requests in the team repo. Without it Tugboat pushes the branch and prints the link that opens the pull request.
 
 Tugboat uses only the Python standard library. It has no third-party package at run time.
 
-## Install
+## Set up
+
+These steps are for a developer who joins a project that already uses Tugboat. Nothing here needs another person's machine.
+
+To start a new project, first make its team repo: see "The team repo" below. Then follow the same steps. The first `tug init` of a project asks a few more questions: see "Init".
+
+**1. Install uv**, if `uv --version` prints nothing.
 
 ```sh
-uv tool install git+https://github.com/selcukyucel/tugboat@v0.24.1
+brew install uv
+```
+
+The other ways are on [uv's installation page](https://docs.astral.sh/uv/getting-started/installation/).
+
+**2. Install Tugboat.**
+
+```sh
+uv tool install git+https://github.com/selcukyucel/tugboat@v0.25.0
 tug version
 ```
 
-Always install from this full address. Tugboat is not published to the Python package index. A package there with the same name is not this tool.
+- Always install from this full address. Tugboat is not published to the Python package index. A package there with the same name is not this tool.
+- When the shell answers that `tug` is not found, run `uv tool update-shell` and open a new terminal. uv installs commands into a folder that a new machine may not have on its `PATH`.
 
-To remove the command: `uv tool uninstall tugboat`.
+**3. Check that Git reaches the team repo without asking for anything.** Ask a teammate for the team repo's address. It is the address GitHub shows under "Code".
+
+```sh
+git ls-remote git@github.com:owner/name.git HEAD
+```
+
+One line with a revision means it works. A question, or an error, has to be solved first: it is about your GitHub access, not about Tugboat.
+
+**4. Run init in the app repo.**
+
+```sh
+cd path/to/the/app/repo
+tug init
+```
+
+It asks two things: whether what it found about the repo is right, and the team repo's address. It asks no project question, because the project's choices are already saved in the team repo. It ends with:
+
+```
+This repo is set up for the project '<name>'.
+Next: start a new agent session in this repo. It begins with a Tugboat sync report.
+```
+
+- `git status` shows nothing new. Everything Tugboat wrote is ignored by Git, through the repo's local exclude file.
+- When this app repo is not in the project profile yet, init offers a pull request in the team repo that adds it. A person merges it.
+- When the project uses the CI secret scan and the repo does not have its workflow file yet, init writes it and says so. That one file is meant to be committed: see "CI secret scan".
+- Do this once in each app repo you work in. From the second repo on, the team repo's address is offered and Enter accepts it.
+
+**5. Start a new session in each agent tool you use**, in the app repo, and ask:
+
+```
+What does the Tugboat sync report from the start of this session say?
+```
+
+The agent should quote a report that starts with `Tugboat sync report` and names the team repo and its revision. Then the hooks work in that tool.
+
+| Agent tool | What it needs | When it is missing |
+|---|---|---|
+| Claude Code | Nothing more | |
+| GitHub Copilot CLI | The folder must be trusted. Trust it when Copilot asks, or add it to `trustedFolders` in `~/.copilot/config.json`. | Copilot prints `Skipped repository hooks ... because the folder ... is not trusted` and goes on. The agent still reads the rules. No sync runs and no action is checked. |
+| GitHub Copilot in VS Code | The workspace must be trusted, and the chat must be in agent mode | Nothing reports it. The agent has no sync report. |
+
+**6. When the report says `Setup is not finished`**, it names the step. For a project that is already running there is normally none. See "The first agent session".
+
+After that there is nothing to run by hand. Each session starts with a sync, and the report says when a newer Tugboat is released.
 
 ## Update
 
@@ -73,7 +133,7 @@ One machine can serve several projects. Each project's minimum is checked in tha
 | `tug doctor` | Checks that this machine and repo are ready | Not built yet |
 | `tug update` | Updates `tug` to the newest release | Works |
 | `tug expire` | Removes records older than six months, after confirmation | Not built yet |
-| `tug remove` | Takes Tugboat out of a repo, or out of every repo on the machine | Not built yet |
+| `tug remove` | Takes Tugboat out of a repo, or out of every repo on the machine | Not built yet. See "Remove Tugboat" for the steps by hand. |
 | `tug hook session-start` | Called by the agent tool at the start of a session. Syncs and reports to the agent. | Works |
 | `tug hook pre-tool-use` | Called by the agent tool before each tool call. Allows, asks, or denies. | Works |
 
@@ -599,7 +659,7 @@ Projects under `Pods/`, `Carthage/`, `node_modules/`, and similar folders are no
 
 A tool that is older than the profile's minimum tool version still sets up the repo. It proposes no profile change until it is updated.
 
-Not built yet: the workflows of the CI checks. The choice is saved.
+Of the optional CI checks, the secret scan has a workflow: see "CI secret scan". The other two are saved as a choice only.
 
 ## The first agent session: where acceptance criteria are kept
 
@@ -681,19 +741,79 @@ Changed in the team repo since this repo's last sync (bb959ef to 9e2ae27):
 | File | What it is |
 |---|---|
 | `.claude/rules/tugboat.md` | The instruction file. It tells the agent where the team content is and how to use it, and lists the rules that apply in this repo. |
-| `.claude/skills/<name>/` | Each skill from the team repo, and the skill `tug-criteria-source` that ships with Tugboat |
+| `.claude/skills/<name>/` | Each skill from the team repo that fits the repo's platform, and the three skills that ship with Tugboat: `tug-criteria-source`, `tug-capture-notes`, `tug-decision-record` |
 | `.claude/agents/<name>.md` | Each approved agent definition from the team repo |
-| `.claude/settings.local.json` | Tugboat adds one hook here, so that each session starts with a sync |
+| `.claude/settings.local.json` | Tugboat adds two hooks here: one starts each session with a sync, one checks each action before the agent makes it. It also adds one "ask" rule for each protected path. |
 
 - A second sync with nothing new writes no file.
 - Tugboat never overwrites a file it did not write, and never changes a file the repo tracks. It reports the path.
-- `.claude/settings.local.json` is yours. Tugboat changes only its own hook entries, which it recognises by their command, and keeps every other key and hook.
+- `.claude/settings.local.json` is yours. Tugboat changes only its own hook entries, which it recognises by their command, and its own "ask" rules, which it lists in `.tugboat/settings-rules.json`. It keeps every other key, hook, and rule.
 - Every generated file is listed in the repo's local exclude file, so `git status` stays clean.
 - The hook calls `tug` by its full path, so it does not depend on the agent tool's `PATH`.
 
 At the start of a session the hook runs a sync and hands its report to the agent. A sync that fails is reported in one line and the session goes on. The report also says when the project's setup is not finished, and when a profile change that this machine proposed was merged. Outside a repo that Tugboat was set up in, the hook does nothing.
 
 `tug sync --team-repo ADDRESS` brings only the clone of one team repo up to date, from any folder. `--app-repo FOLDER` names an app repo when the command is run from somewhere else.
+
+## Remove Tugboat
+
+`tug remove` is not built yet. Until it is, these are the steps by hand. They take Tugboat out of one app repo. Nothing in GitHub changes.
+
+Do the steps in this order. The hooks come first, because a hook that calls a `tug` that is gone stops the agent: see the next section.
+
+**1. Take Tugboat's entries out of `.claude/settings.local.json`.**
+
+- Under `hooks`, delete the two entries whose command ends in `tug hook session-start` and `tug hook pre-tool-use`.
+- Under `permissions`, in `ask`, delete the rules that `.tugboat/settings-rules.json` lists. They all start with `Edit(//` and the full path of the repo.
+- When the file holds nothing of your own, delete the whole file. Tugboat created it only if it was not there.
+
+**2. Delete what Tugboat generated.** The repo's local exclude file has the list, between two marker lines:
+
+```sh
+sed -n '/^# >>> tugboat/,/^# <<< tugboat/p' "$(git rev-parse --git-path info/exclude)"
+```
+
+- Delete each file and folder it names, apart from `.claude/settings.local.json` when you kept that file in step 1.
+- `.tugboat/capture/` holds notes and decision records an agent drafted and nobody proposed yet. Look there first. `tug capture propose` and `tug decision propose` send them to the team repo.
+
+**3. Delete that block from the exclude file**, from the line `# >>> tugboat` to the line `# <<< tugboat`.
+
+Now a new agent session in the repo loads no Tugboat file, and no hook calls `tug`. `tug init` sets the repo up again at any time.
+
+What stays, on purpose:
+
+- **Files the repo tracks.** Tugboat writes one: `.github/workflows/tugboat-secret-scan.yml`, when the project uses the CI secret scan. It belongs to the project, not to your machine. Leave it.
+- **The team repo.** The project profile still lists the app repo, and pull requests that were opened stay. An app repo leaves a project through a pull request in the team repo that takes it out of `profile.json`.
+
+To take Tugboat off the machine, after every app repo on it is done:
+
+```sh
+rm -rf ~/.tugboat           # the clones of the team repos, and Tugboat's state
+uv tool uninstall tugboat   # the command
+```
+
+`~/.tugboat/pending/` holds profile changes that this machine proposed and nobody merged yet. They are lost with the folder. The pull requests themselves stay in GitHub.
+
+## When the `tug` command is missing
+
+The hooks in an app repo call `tug` by its full path. When that file is gone, the check before each action cannot run, and a check that cannot run denies the action.
+
+| What you see | Where |
+|---|---|
+| Every write and every shell command is denied with `failed; blocking because onFailure is "block"` | Claude Code |
+| Every write and every shell command is denied with `hook errored` | Copilot CLI |
+| No sync report at the start of the session | Every agent tool, because the hook that makes the report cannot run |
+
+The two denials were seen. VS Code was not tried with a missing `tug`. Reading files still works. The agent cannot repair this, because its own writes are denied too. You do it, in a terminal.
+
+It happens when Tugboat was uninstalled while a repo was still set up, when a repo folder was copied from another machine or another user, or when uv's folder for commands moved.
+
+There are two ways out.
+
+- **Install Tugboat again**, with the command from "Set up". Then run `tug sync` in the app repo. Sync writes the hooks again with the path of the `tug` that is installed now.
+- **Or take Tugboat out of the repo by hand**, with the steps in "Remove Tugboat". Step 1 alone lets the agent work again.
+
+The instruction file Tugboat generates, `.claude/rules/tugboat.md`, tells the agent the same, so that it can tell you.
 
 ## Development
 
