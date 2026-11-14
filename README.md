@@ -22,7 +22,7 @@ Tugboat uses only the Python standard library. It has no third-party package at 
 ## Install
 
 ```sh
-uv tool install git+https://github.com/selcukyucel/tugboat@v0.24.0
+uv tool install git+https://github.com/selcukyucel/tugboat@v0.24.1
 tug version
 ```
 
@@ -502,6 +502,7 @@ It has two parts.
 
 - **The scanner is pinned.** The workflow names one gitleaks version and the SHA-256 of its archive, and checks the download against it before it unpacks it.
 - **A finding is kept out of the log.** The log names the rule, the file, and the commit.
+- **A secret that a later commit takes out again is still found**, because the scan reads every commit of the pull request, not only its last state.
 - **The caller is the one file Tugboat writes that Git is meant to see**, because a workflow runs only when it is committed. Tugboat writes it and never commits it. Commit it through the app repo's own review, with whoever owns its CI.
 - **Turning the scan off removes the caller**, and only while it is exactly what Tugboat wrote. A file somebody changed is left alone, and init says so.
 - **Other app repos of the project** get the file at their next `tug init`. Until then their sync report says that the file is missing. Sync itself changes no file Git sees.
