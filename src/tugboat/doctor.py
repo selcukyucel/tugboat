@@ -659,7 +659,7 @@ def check_sessions(repo: Path, surfaces: list[str]) -> list[Check]:
             if answer == observed.OK:
                 checks.append(Check(PASSED, text, area=SESSION))
             elif answer == observed.FAILED:
-                checks.append(Check(FAILED, text, f"Connect {'the tracker' if label == 'tracker' else 'GitHub'} in that tool, then run the skill again.", SESSION))
+                checks.append(Check(FAILED, text, f"Connect {'the tracker' if label == 'tracker' else 'GitHub'} in that tool, or give its sign-in the permission it lacks, then run the skill again.", SESSION))
             else:
                 checks.append(Check(UNTESTED, text, area=SESSION))
     return checks

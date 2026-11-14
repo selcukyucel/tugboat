@@ -511,7 +511,7 @@ class SessionTests(DoctorCase):
         code, out = self.doctor(self.ios)
         self.assertEqual(code, 1)
         part = out[out.index("== Observed in a session") :]
-        self.assertIn("- Claude Code: the tracker connection did not answer, as its agent reported.\n  To repair: Connect the tracker in that tool, then run the skill again.", part)
+        self.assertIn("- Claude Code: the tracker connection did not answer, as its agent reported.\n  To repair: Connect the tracker in that tool, or give its sign-in the permission it lacks, then run the skill again.", part)
         self.assertIn("- Claude Code: the GitHub connection was not tried, as its agent reported.", part)
 
     def test_a_check_from_long_ago_no_longer_counts(self):
@@ -548,6 +548,7 @@ class SessionTests(DoctorCase):
         for answer in observed.ANSWERS:
             self.assertIn(f"`{answer}`", body)
         self.assertIn("Do not change a setting, trust a folder, or install anything yourself.", body)
+        self.assertIn("The results can still differ: a sign-in can be allowed to read issues and not pull requests.", body)
 
 
 class CheckCommandTests(unittest.TestCase):

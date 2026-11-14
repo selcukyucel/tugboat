@@ -29,7 +29,7 @@ This skill finds out, from inside the session. You report what you see. You repa
    | The connection exists and gave an error, or asked for a sign-in | `failed` |
    | This session has no such connection, or you did not try | `none` |
 
-3. **Try the GitHub connection** the same way: read one thing about this repo, such as its open pull requests, through the GitHub connection of this agent tool. Not through `git`, and not through the `gh` command: those are not the connection. The result is `ok`, `failed`, or `none`, as above. When the tracker is GitHub Projects, steps 2 and 3 use the same connection and have the same result.
+3. **Try the GitHub connection** the same way: read one thing about this repo, such as its open pull requests, through the GitHub connection of this agent tool. Not through `git`, and not through the `gh` command: those are not the connection. The result is `ok`, `failed`, or `none`, as above. When the tracker is GitHub Projects, steps 2 and 3 use the same connection. The results can still differ: a sign-in can be allowed to read issues and not pull requests. Report each as you saw it.
 
 4. **Run the check with your shell tool**, as one command of its own:
 

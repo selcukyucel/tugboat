@@ -38,7 +38,7 @@ The other ways are on [uv's installation page](https://docs.astral.sh/uv/getting
 **2. Install Tugboat.**
 
 ```sh
-uv tool install git+https://github.com/selcukyucel/tugboat@v0.27.0
+uv tool install git+https://github.com/selcukyucel/tugboat@v0.27.1
 tug version
 ```
 
