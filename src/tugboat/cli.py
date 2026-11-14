@@ -544,6 +544,14 @@ def _team_propose(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _doctor(_args: argparse.Namespace) -> int:
+    from tugboat import doctor
+
+    report = doctor.run(".")
+    print(doctor.render(report))
+    return EXIT_ERROR if report.failed else EXIT_OK
+
+
 COMMANDS: tuple[Command, ...] = (
     Command("version", "Print the installed version", _version),
     Command("init", "Set up the app repo it is run in", _init, _configure_init),
@@ -555,7 +563,7 @@ COMMANDS: tuple[Command, ...] = (
     Command("decision", "List and propose the decision records an agent drafted: `tug decision status`, `propose`", _decision, _configure_decision),
     Command("protected", "Say whether a file or folder in this app repo is a protected path, and why", _protected, _configure_protected),
     Command("status", "Print the session brief"),
-    Command("doctor", "Check that this machine and repo are ready"),
+    Command("doctor", "Check that this machine and this app repo are ready, from what is on disk", _doctor),
     Command("update", "Update tug to the newest release", _update, _configure_update),
     Command("expire", "Remove records older than six months, after confirmation"),
     Command("remove", "Take Tugboat out of this repo, or out of every repo on this machine"),

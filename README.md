@@ -38,7 +38,7 @@ The other ways are on [uv's installation page](https://docs.astral.sh/uv/getting
 **2. Install Tugboat.**
 
 ```sh
-uv tool install git+https://github.com/selcukyucel/tugboat@v0.25.0
+uv tool install git+https://github.com/selcukyucel/tugboat@v0.26.0
 tug version
 ```
 
@@ -72,7 +72,15 @@ Next: start a new agent session in this repo. It begins with a Tugboat sync repo
 - When the project uses the CI secret scan and the repo does not have its workflow file yet, init writes it and says so. That one file is meant to be committed: see "CI secret scan".
 - Do this once in each app repo you work in. From the second repo on, the team repo's address is offered and Enter accepts it.
 
-**5. Start a new session in each agent tool you use**, in the app repo, and ask:
+**5. Run the setup check** in the app repo:
+
+```sh
+tug doctor
+```
+
+It says what is ready, what is not, and how to repair each thing. See "Setup check" below.
+
+**6. Start a new session in each agent tool you use**, in the app repo, and ask:
 
 ```
 What does the Tugboat sync report from the start of this session say?
@@ -86,7 +94,7 @@ The agent should quote a report that starts with `Tugboat sync report` and names
 | GitHub Copilot CLI | The folder must be trusted. Trust it when Copilot asks, or add it to `trustedFolders` in `~/.copilot/config.json`. | Copilot prints `Skipped repository hooks ... because the folder ... is not trusted` and goes on. The agent still reads the rules. No sync runs and no action is checked. |
 | GitHub Copilot in VS Code | The workspace must be trusted, and the chat must be in agent mode | Nothing reports it. The agent has no sync report. |
 
-**6. When the report says `Setup is not finished`**, it names the step. For a project that is already running there is normally none. See "The first agent session".
+**7. When the report says `Setup is not finished`**, it names the step. For a project that is already running there is normally none. See "The first agent session".
 
 After that there is nothing to run by hand. Each session starts with a sync, and the report says when a newer Tugboat is released.
 
@@ -130,7 +138,7 @@ One machine can serve several projects. Each project's minimum is checked in tha
 | `tug decision status`, `propose` | Lists the decision records an agent drafted, and proposes them as a pull request | Works. Not yet run in an agent session. |
 | `tug protected [path...]` | Says whether a file or folder in an app repo is a protected path, and why | Works |
 | `tug status` | Prints the session brief | Not built yet |
-| `tug doctor` | Checks that this machine and repo are ready | Not built yet |
+| `tug doctor` | Checks that this machine and this app repo are ready, from what is on disk | Works. What happens inside an agent session is not checked yet. |
 | `tug update` | Updates `tug` to the newest release | Works |
 | `tug expire` | Removes records older than six months, after confirmation | Not built yet |
 | `tug remove` | Takes Tugboat out of a repo, or out of every repo on the machine | Not built yet. See "Remove Tugboat" for the steps by hand. |
@@ -754,6 +762,54 @@ Changed in the team repo since this repo's last sync (bb959ef to 9e2ae27):
 At the start of a session the hook runs a sync and hands its report to the agent. A sync that fails is reported in one line and the session goes on. The report also says when the project's setup is not finished, and when a profile change that this machine proposed was merged. Outside a repo that Tugboat was set up in, the hook does nothing.
 
 `tug sync --team-repo ADDRESS` brings only the clone of one team repo up to date, from any folder. `--app-repo FOLDER` names an app repo when the command is run from somewhere else.
+
+## Setup check
+
+```sh
+tug doctor
+```
+
+Run it inside an app repo. It reads files and asks installed programs for their version. It changes nothing and needs no network. Outside an app repo it checks the machine only.
+
+Every check ends in one of four results, and they are reported apart:
+
+| Result | Meaning |
+|---|---|
+| Failed | It was checked and it is wrong. The line says how to repair it. |
+| Untested | It could not be checked from here. It is never shown as a pass. |
+| Advisory | Something to look at. It does not make the machine "not ready". |
+| Passed | It was checked and it is right. |
+
+The exit code is `1` when a check failed, and `0` otherwise.
+
+What it checks:
+
+| Check | Fails when |
+|---|---|
+| `tug` | The installed version is older than the project's minimum. It also names the newest release this machine has seen. |
+| uv | It is not installed, so `tug update` cannot run |
+| Claude Code | It is older than 2.1.295. Not installed counts as untested. |
+| GitHub Copilot CLI | The app repo's folder is not in Copilot's list of trusted folders. Copilot then runs no hook there and shows one warning line. |
+| GitHub Copilot in VS Code | Never: the version is read, and workspace trust is always untested, because it cannot be read from disk |
+| The platform toolchain | iOS: `xcodebuild -version` does not work. Android: the repo has no `gradlew`, no Java answers, or no Android SDK is named in `local.properties` or `ANDROID_HOME`. |
+| The clone of the team repo | It is missing, it is on another branch, or the last sync did not reach the team repo |
+| The copy in `.tugboat/team/` | It is older than what the machine has fetched, or another tool version wrote it |
+| The agent tool files | One is missing or changed |
+| The hooks | One is missing from `.claude/settings.local.json`, or the `tug` they call is gone |
+| Protected paths | The compiled list is missing, or a rule for Claude Code is missing |
+| Git | It sees a file Tugboat generated |
+| The project | The repo is not in the profile, or a setup step is open |
+| MCP servers | A configured server is not on the team's list |
+| Agent definitions | Never. One that is not in the team's agent registry is listed as advisory. |
+
+- **Only the agent tools the project uses are checked.** The project profile names them.
+- **MCP servers are read from the settings files**: for Claude Code `~/.claude.json` and `.mcp.json` in the repo, for Copilot CLI `~/.copilot/mcp-config.json`, for VS Code its user `mcp.json` and `.vscode/mcp.json` in the repo.
+- **A server is matched by the host of its address or by a word of its command line**, never by the name a developer gave it. The report shows the name, and the host or the program. It never shows an argument, a header, or the rest of an address, because a key can be in any of them.
+- **Servers that an account, a plugin, or an extension adds are not in a settings file**, so they are not seen. The report says so, as untested.
+- **When the team has not listed its MCP servers yet**, nothing is compared, and that is untested too.
+- **Agent definitions** are read from `.claude/agents/` and `.github/agents/` in the repo.
+
+Not checked yet: what happens inside an agent session, such as whether a hook really fires and whether the tracker connection answers. And the scheme, the test target, or the JDK version a project needs, which wait for the build and test profile.
 
 ## Remove Tugboat
 
