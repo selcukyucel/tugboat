@@ -11,6 +11,12 @@ from tugboat.version import Version
 from test_sync import SyncCase, run
 
 
+NOTE_FILE = frontmatter.render(
+    {"title": "Token refresh", "owner": "@pat", "repo": "acme/shop-ios", "paths": ["Sources/Auth/**"], "last_verified": "2026-11-13"},
+    "Tokens refresh on 401.",
+)
+
+
 class CopyCase(SyncCase):
     """SyncCase gives a team repo remote. This adds team content and an app repo."""
 
@@ -18,7 +24,7 @@ class CopyCase(SyncCase):
         super().setUp()
         self.push("tugboat.json", '{"schema": "tug.team-repo/1"}\n')
         self.push("policies/ios/IOS-001.md", "rule one\n")
-        self.push("knowledge/auth/tokens.md", "a note\n")
+        self.push("knowledge/auth/tokens.md", NOTE_FILE)
         self.push(".github/workflows/check.yml", "name: check\n")
         self.app = self.tmp / "app"
         self.git(self.tmp, "init", "--quiet", "-b", "main", os.fspath(self.app))

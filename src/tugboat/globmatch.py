@@ -40,6 +40,23 @@ def matches(pattern: str, path: str) -> bool:
     return _match(tuple(pattern.split("/")), tuple(path.split("/")))
 
 
+def _reaches(pattern: tuple[str, ...], folder: tuple[str, ...]) -> bool:
+    if not folder or not pattern:
+        return True  # the pattern goes on beneath the folder, or it covers the folder
+    if pattern[0] == "**":
+        return True  # `**` takes the rest of the folder, and what follows it can lie beneath
+    return _part(pattern[0]).fullmatch(folder[0]) is not None and _reaches(pattern[1:], folder[1:])
+
+
+def reaches(pattern: str, folder: str) -> bool:
+    """True when the pattern covers the folder, or can match something inside it.
+
+    This is the question for a folder: `Sources/Auth/Tokens/**` does not cover
+    the folder `Sources/Auth`, and it does cover files inside it.
+    """
+    return _reaches(tuple(pattern.split("/")), tuple(folder.split("/")))
+
+
 def specificity(pattern: str) -> tuple[int, int]:
     """How narrow a pattern is: the parts before its first wildcard, then all its parts. More is narrower."""
     parts = pattern.split("/")

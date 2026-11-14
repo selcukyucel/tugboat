@@ -159,8 +159,11 @@ def check_team_repo(root: str | os.PathLike[str]) -> Report:
             else:
                 rule_ids[rule["id"]] = check.rel(path)
 
+    registered_repos = {repo["github"].lower() for repo in profile["app_repos"]} if profile else None
     for path in _markdown_files(root_path / "knowledge"):
-        check.markdown(path, formats.validate_note)
+        note = check.markdown(path, formats.validate_note)
+        if note is not None and registered_repos is not None and note["repo"].lower() not in registered_repos:
+            check.warning(path, f"is about the repo {note['repo']}, which is not in the project profile. No agent will load it.")
 
     decision_ids: dict[str, str] = {}
     for path in _markdown_files(root_path / "decisions"):

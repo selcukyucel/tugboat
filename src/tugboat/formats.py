@@ -13,6 +13,7 @@ import re
 from collections.abc import Mapping
 from typing import Any
 
+from tugboat import secretscan
 from tugboat.errors import DataError
 from tugboat.validate import (
     require_choice,
@@ -58,6 +59,7 @@ _TOOL_NAME = re.compile(r"^[A-Za-z][A-Za-z0-9_.:*()-]{0,99}$")
 _BRANCH = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,99}$")
 _HOST = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$")
 _COMMAND_WORD = re.compile(r"^[@A-Za-z0-9][A-Za-z0-9@/._+-]{0,99}$")
+_SECRET_ADVICE = "Take it out of the note. If it is a real secret, replace it where it is used too, because Git keeps what was pushed."
 
 
 def _schema(data: Mapping[str, Any], expected: str, label: str) -> None:
@@ -301,14 +303,14 @@ def validate_ai_use(fields: Mapping[str, Any], body: str) -> dict[str, Any]:
 
 
 def validate_note(fields: Mapping[str, Any], body: str) -> dict[str, Any]:
-    """knowledge/**/*.md: one note about the code."""
+    """knowledge/**/*.md: one note about the code. No secret and no raw chat transcript."""
     label = "note"
     require_exact_fields(fields, required=frozenset({"title", "owner", "repo", "paths", "last_verified"}), label=label)
     paths = [
         validate_glob(item, "note paths item")
         for item in require_list(fields["paths"], "note paths", maximum=50, minimum=1)
     ]
-    return {
+    note = {
         "title": require_text(fields["title"], "note title", 150),
         "owner": require_text(fields["owner"], "note owner", 100),
         "repo": validate_repo_ref(fields["repo"], "note repo"),
@@ -316,6 +318,15 @@ def validate_note(fields: Mapping[str, Any], body: str) -> dict[str, Any]:
         "last_verified": validate_date(fields["last_verified"], "note last_verified"),
         "text": _body(body, "note"),
     }
+    in_header = secretscan.find(f"{note['title']}\n{note['owner']}")
+    if in_header:
+        raise DataError(f"note header holds what looks like a secret ({in_header[0].kind}). {_SECRET_ADVICE}")
+    in_text = secretscan.find(note["text"])
+    if in_text:
+        raise DataError(f"note holds what looks like a secret: {secretscan.describe(in_text)} of its text. {_SECRET_ADVICE}")
+    if secretscan.looks_like_transcript(note["text"]):
+        raise DataError("note looks like a raw chat transcript: it has lines that open a turn, such as 'User:'. Write what was learned, in plain sentences.")
+    return note
 
 
 def validate_decision(fields: Mapping[str, Any], body: str) -> dict[str, Any]:

@@ -22,4 +22,19 @@ The note, in plain sentences.
 | `paths` | The code the note describes. The agent loads a note only when its task touches these paths. |
 | `last_verified` | The day someone last checked the note against the code |
 
-Write what the code does not already say. No secrets. No chat transcripts.
+Write what the code does not already say, in plain sentences.
+
+## What the check refuses
+
+`tug team check` fails a note that:
+
+- misses a field, or has a field nobody defined
+- holds what looks like a secret: a token, a key, a password. The message names the kind and the line, never the secret.
+- looks like a raw chat transcript: several lines that open a turn, such as `User:` and `Assistant:`
+
+A note that fails is not given to any agent. The check warns when a note names a repo that is not in the project profile.
+
+## How the agent finds a note
+
+The agent does not read this whole folder. In an app repo it gets an index: for each note about that repo, its paths, its title, and its file.
+Before it works on a file, it runs `tug notes <path>` and reads only the notes that cover the path. A note about another repo is never offered.

@@ -22,7 +22,7 @@ Tugboat uses only the Python standard library. It has no third-party package at 
 ## Install
 
 ```sh
-uv tool install git+https://github.com/selcukyucel/tugboat@v0.15.0
+uv tool install git+https://github.com/selcukyucel/tugboat@v0.16.0
 tug version
 ```
 
@@ -65,6 +65,7 @@ One machine can serve several projects. Each project's minimum is checked in tha
 | `tug profile set-criteria` | Saves where the project's stories keep their acceptance criteria. Run by the agent in the first session. | Works. Not yet tried with a real tracker. |
 | `tug sync` | Brings the team repo clone, an app repo's copy of it, and the agent tool files up to date | Works |
 | `tug owner <path>` | Names the owner of a file or folder in an app repo, from the estate map | Works |
+| `tug notes [path...]` | Names the knowledge notes that cover a file or folder in an app repo | Works |
 | `tug status` | Prints the session brief | Not built yet |
 | `tug doctor` | Checks that this machine and repo are ready | Not built yet |
 | `tug update` | Updates `tug` to the newest release | Works |
@@ -189,6 +190,49 @@ tug owner Sources/Checkout/Payments/Card.swift
 | `**` | Any number of folders, also none. It must stand alone between slashes. |
 
 Everything else matches itself, and letter case counts. A pattern covers what it matches and everything beneath it, so `Sources/Auth` and `Sources/Auth/**` cover the same files.
+
+## Knowledge base
+
+A knowledge note is one Markdown file under `knowledge/` in the team repo. It says what the code does not say for itself: how a module works, a trap and its fix, a term the team uses.
+
+```
+---
+title: How login tokens are refreshed
+owner: a-github-handle
+repo: your-org/your-app-ios
+paths: ["Sources/Auth/**", "Tests/AuthTests/**"]
+last_verified: 2026-11-13
+---
+
+The note, in plain sentences.
+```
+
+Every note names an owner, the app repo and the code paths it covers, and the day someone last checked it against the code.
+
+**The agent reads only the notes for its task.** It does not load the whole base.
+
+```sh
+tug notes Sources/Auth/Login/LoginView.swift
+# - How login tokens are refreshed: .tugboat/team/knowledge/auth/token-refresh.md (covers Sources/Auth/Login/LoginView.swift; owner @pat; last verified 2026-11-13)
+```
+
+- Sync writes an index into the instruction file: for each note about this repo, its paths, its title, and its file. The text of a note is not in the index. The index names 30 notes and counts the rest.
+- The agent is told to run `tug notes <path>...` with the files or folders of its task, and to read the notes it names and no others.
+- A file gets the notes whose paths cover it. A folder also gets the notes about anything inside it.
+- Several paths give one list, each note once. With no path, every note about this repo is listed.
+- A note about another repo is never offered. When no note covers a path, the command says so and exits with `0`.
+- When a note and the code disagree, the agent is told that the code is right, and to tell the developer that the note is out of date.
+
+**No secrets and no chat transcripts.** `tug team check` fails a note that:
+
+- holds what looks like a secret. The patterns cover private keys, AWS, GitHub, Slack, Google, Stripe, and AI provider keys, signed tokens (JWT), a password inside a URL, and a name such as `password` or `api_key` followed by a value that mixes letters with two digits or more. A sentence about passwords is not a finding, and neither is a call or a property in a line of code.
+- looks like a raw chat transcript: four or more lines that open a turn, such as `User:` and `Assistant:`, from two speakers or more.
+
+The message names the kind of secret and the line. It never repeats the secret. A note that fails is also left out on a developer's machine, so no agent gets it, and sync says which note was left out.
+
+The check is a pattern check. It can miss a secret with an unusual shape, and it does not replace a review of the pull request. The same patterns will be used for the hook that checks a write, and for task records.
+
+`tug team check` also warns when a note names a repo that is not in the project profile, because no agent would load it.
 
 ## Proposing a change to the team repo
 

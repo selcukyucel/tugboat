@@ -20,7 +20,7 @@ from importlib.resources.abc import Traversable
 from pathlib import Path
 from typing import NamedTuple
 
-from tugboat import aitools, aiuse, apprepo, detect, estate, formats, frontmatter, profile, rules, settingsmerge, teamcopy
+from tugboat import aitools, aiuse, apprepo, detect, estate, formats, frontmatter, knowledge, profile, rules, settingsmerge, teamcopy
 from tugboat.address import TeamRepoAddress
 from tugboat.errors import DataError, TugError
 from tugboat.gitrun import GitError, git
@@ -104,7 +104,7 @@ The report lists what changed in the team repo since the last sync, with the pat
 
 - Rules: the section "Rules that apply in this repo" below lists them, with the file of each. `{COPY}/policies/README.md` explains the fields.
 - The team's AI use policy: the section "AI use policy" below.
-- Knowledge notes: `{COPY}/knowledge/`. Each note lists the code paths it covers in its header. Read the notes whose paths match the files of the current task.
+- Knowledge notes: the section "Knowledge notes" below, and the command `tug notes <path>`. Read the notes that cover the files of the current task, and no others.
 - Decision records: `{COPY}/decisions/`.
 - Owners of apps and modules: the section "Who owns what" below, and the command `tug owner <path>`.
 - Protected paths: `{COPY}/permissions/protected-paths.json`. Ask the developer before any edit to a file that matches.
@@ -201,12 +201,15 @@ def desired_units(repo: Path, address: TeamRepoAddress) -> tuple[list[_Unit], li
     estate_map = estate.load(repo)
     if estate_map.problem:
         problems.append(estate_map.problem)
+    notes = knowledge.load(repo)
+    problems.extend(notes.problems)
     remote = detect.remote_address(repo)
     sections = (
         rules.render(ruleset, state["revision"] if state else None),
         aiuse.render(policy),
         aitools.render(register),
         estate.render(estate_map, remote.slug if remote else None),
+        knowledge.render(notes, remote.slug if remote else None),
     )
     text = pointer_text(address, "\n".join(sections))
     units = [_Unit("the instruction file", f"/{RULES_FILE}", {RULES_FILE: text.encode("utf-8")})]

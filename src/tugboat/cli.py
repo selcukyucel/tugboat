@@ -250,6 +250,46 @@ def _owner(args: argparse.Namespace) -> int:
     return EXIT_ERROR if failed else EXIT_OK
 
 
+def _configure_notes(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("paths", nargs="*", metavar="PATH", help="a file or a folder in this app repo. It need not exist yet. With no path, every note about this repo is listed.")
+
+
+def _notes(args: argparse.Namespace) -> int:
+    from tugboat import apprepo, detect, estate, knowledge, teamcopy
+
+    repo = apprepo.find_app_repo(".")
+    if teamcopy.read_state(repo) is None:
+        raise TugError("this folder is not set up with Tugboat. Run `tug init` inside the app repo first.")
+    loaded = knowledge.load(repo)
+    remote = detect.remote_address(repo)
+    notes = knowledge.notes_of(loaded.notes, remote.slug if remote else None)
+    name = remote.slug if remote else "this repo"
+    for problem in loaded.problems:
+        print(f"Note: {problem}.")
+    if not args.paths:
+        if not notes:
+            print(f"The team repo has no knowledge note about {name}.")
+        for note in notes:
+            print(f"- {note.title}: {note.file} (covers {', '.join(note.paths)}; owner {note.owner}; last verified {note.last_verified})")
+        return EXIT_OK
+    asked: list[tuple[str, bool]] = []
+    failed = False
+    for given in args.paths:
+        try:
+            path = estate.repo_path(repo, given)
+        except TugError as error:
+            print(f"{given}: {error}")
+            failed = True
+            continue
+        asked.append((path, (repo / path).is_dir()))
+    found = knowledge.matching(notes, asked)
+    for match in found:
+        print(knowledge.note_line(match))
+    if asked and not found:
+        print(f"No knowledge note covers {', '.join(path for path, _ in asked)}. There is none to read for {'it' if len(asked) == 1 else 'them'}.")
+    return EXIT_ERROR if failed else EXIT_OK
+
+
 def _team_repo_of(option: str | None):  # noqa: ANN202 - the address type is imported late
     """The team repo a command works on: the one given, or the one this app repo is set up for."""
     from tugboat import apprepo, teamcopy
@@ -391,6 +431,7 @@ COMMANDS: tuple[Command, ...] = (
     Command("sync", "Bring the team repo clone, this repo's copy, and the agent tool files up to date", _sync, _configure_sync),
     Command("profile", "Show the project profile, or save where acceptance criteria are kept: `tug profile show`, `set-criteria`", _profile, _configure_profile),
     Command("owner", "Name the owner of a file or folder in this app repo, from the estate map", _owner, _configure_owner),
+    Command("notes", "Name the knowledge notes that cover a file or folder in this app repo", _notes, _configure_notes),
     Command("status", "Print the session brief"),
     Command("doctor", "Check that this machine and repo are ready"),
     Command("update", "Update tug to the newest release", _update, _configure_update),
