@@ -1,10 +1,11 @@
 import json
 import os
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 
-from tugboat import apprepo, doctor, releases, sync, team_repo, update
+from tugboat import apprepo, doctor, formats, frontmatter, hook, observed, releases, sync, team_repo, update
 from tugboat.address import parse_team_repo_address
 from tugboat.version import Version
 
@@ -35,7 +36,7 @@ class DoctorCase(RuleCase):
         tug = self.bin / "tug"
         tug.write_text("#!/bin/sh\n", encoding="utf-8")
         tug.chmod(0o755)
-        clean = {key: value for key, value in os.environ.items() if key not in {"JAVA_HOME", "ANDROID_HOME", "ANDROID_SDK_ROOT", "COPILOT_HOME", "CLAUDE_CONFIG_DIR"}}
+        clean = {key: value for key, value in os.environ.items() if key not in {"JAVA_HOME", "ANDROID_HOME", "ANDROID_SDK_ROOT", "COPILOT_HOME", "CLAUDE_CONFIG_DIR", "AI_AGENT"}}
         for patch in (
             mock.patch.dict(os.environ, {**clean, "TUG_COMMAND": os.fspath(tug)}, clear=True),
             mock.patch.object(doctor, "user_home", lambda: self.userhome),
@@ -109,16 +110,20 @@ class ReadyTests(DoctorCase):
         untested = self.group(out, "Untested")
         self.assertIn("Whether VS Code trusts this workspace cannot be read from disk.", untested)
         self.assertIn("MCP servers that an account, a plugin, or an extension adds are not in a settings file", untested)
-        self.assertTrue(out.splitlines()[-1].startswith("Nothing failed. 2 things could not be tested from here, so this is not a full pass."), out)
+        session = out[out.index("== Observed in a session") :]
+        for name in ("Claude Code", "GitHub Copilot CLI", "GitHub Copilot in VS Code"):
+            self.assertIn(f"- {name} has not been checked inside a session in this repo, so whether its hooks really run is not known.", session)
+        self.assertEqual(out.splitlines()[-1], "Nothing failed. 5 things could not be tested, so this is not a full pass.")
 
     def test_the_four_results_are_reported_apart_and_a_failure_comes_first(self):
         (self.ios / ".claude/agents/mine.md").write_text("mine\n", encoding="utf-8")
         code, out = self.doctor(self.ios)
         self.assertEqual(code, 1)
         titles = [line.split(":")[0] for line in out.splitlines() if line.split(":")[0] in {"Failed", "Untested", "Advisory", "Passed"}]
-        self.assertEqual(titles, ["Failed", "Untested", "Advisory", "Passed"])
+        self.assertEqual(titles, ["Failed", "Untested", "Advisory", "Passed", "Untested"])
+        self.assertLess(out.index("== On disk"), out.index("== Observed in a session"))
         self.assertIn("Not ready: ", out.splitlines()[-1])
-        self.assertIn("It changed nothing.", out)
+        self.assertIn("Nothing was changed.", out)
 
     def test_it_changes_no_file(self):
         def snapshot(root):
@@ -394,6 +399,169 @@ class RegisterTests(DoctorCase):
             self.group(out, "Advisory"),
         )
         self.assertIn("1 agent definition from the team's agent registry is installed in this repo.", self.group(out, "Passed"))
+
+
+class SessionTests(DoctorCase):
+    """What an agent tool's own session shows, beside what is configured on disk."""
+
+    COMMAND = "tug doctor observe --surface {surface} --tracker {tracker} --github {github}"
+
+    def payload(self, root, session="s1", claude=True, **more):
+        base = {"cwd": os.fspath(root), "session_id": session, **more}
+        return json.dumps({**base, "transcript_path": "/tmp/t.jsonl"} if claude else {**base, "timestamp": "2026-11-14T23:04:39.157Z"})
+
+    def in_session(self, root, surface, *, session="s1", start=True, claude=True, tracker="ok", github="ok"):
+        """An agent tool that runs the hooks: the session starts, and then the agent runs the check with its shell tool."""
+        command = self.COMMAND.format(surface=surface, tracker=tracker, github=github)
+        if start:
+            self.assertIn("Tugboat sync report", hook.session_start(self.payload(root, session, claude)))
+        self.assertEqual(hook.pre_tool_use(self.payload(root, session, claude, tool_name="Bash", tool_input={"command": command})), "")
+        return self.tug(root, *command.split()[1:])
+
+    def session_part(self, root):
+        out = self.doctor(root)[1]
+        return out[out.index("== Observed in a session") :]
+
+    def test_an_agent_tool_that_runs_the_hooks_is_seen_working(self):
+        code, out, err = self.in_session(self.ios, "claude-code")
+        self.assertEqual((code, err), (0, ""), out)
+        for expected in (
+            "Tugboat setup check, inside a session of Claude Code",
+            "- Hooks: the check before each action ran for this command, so this agent tool loads Tugboat's hooks.",
+            "- The session-start hook ran in this session too.",
+            "- Tracker connection: answered, as you reported.",
+            "- GitHub connection: answered, as you reported.",
+            "This is recorded in `.tugboat/observed.json`.",
+            "Do not repair anything yourself.",
+        ):
+            with self.subTest(expected=expected):
+                self.assertIn(expected, out)
+        part = self.session_part(self.ios)
+        self.assertIn("- Claude Code: the hooks ran in its session (checked just now, with tug ", part)
+        self.assertIn("- Claude Code: the tracker connection answered, as its agent reported.", part)
+        self.assertIn("- Claude Code: the GitHub connection answered, as its agent reported.", part)
+        self.assertIn("- GitHub Copilot CLI has not been checked inside a session in this repo", part)
+        self.assertNotIn("Failed", part)
+        self.assertEqual(self.git(self.ios, "status", "--porcelain"), "")
+
+    def test_a_tool_whose_hook_does_not_fire_shows_configured_on_disk_and_not_observed(self):
+        self.trust(self.ios)
+        code, out, err = self.tug(self.ios, "doctor", "observe", "--surface", "copilot-cli")
+        self.assertEqual((code, err), (1, ""))
+        self.assertIn("- Hooks: NOT RUNNING. No hook ran before this command.", out)
+        self.assertIn("The usual cause is that Copilot CLI does not trust this folder.", out)
+        self.assertIn("- Tracker connection: was not tried, as you reported.", out)
+        code, out = self.doctor(self.ios)
+        self.assertEqual(code, 1)
+        disk, session = out.split("== Observed in a session")
+        self.assertIn("Both hooks are in `.claude/settings.local.json`", disk)
+        self.assertIn("Copilot CLI trusts this folder, so it loads the hooks.", disk)
+        self.assertIn("- GitHub Copilot CLI: no hook ran in its session (checked just now). So there nothing syncs at the start and no action is checked.", session)
+        self.assertIn("  To repair: Start `copilot` in this folder and choose to trust it and remember it. Then run the skill again in a new session.", session)
+
+    def test_each_tool_gets_the_cause_and_the_repair_of_its_own(self):
+        for surface, cause, repair in (
+            ("claude-code", "`disableAllHooks`", "Start `claude` in this repo's folder"),
+            ("copilot-vscode", "VS Code does not trust this workspace", "Workspaces: Manage Workspace Trust"),
+        ):
+            with self.subTest(surface=surface):
+                out = self.tug(self.ios, "doctor", "observe", "--surface", surface)[1]
+                self.assertIn(cause, out)
+                self.assertIn(repair, out)
+
+    def test_the_hook_says_which_tool_it_is_whatever_the_agent_names(self):
+        with mock.patch.dict(os.environ, {"AI_AGENT": "github_copilot_vscode_agent"}):
+            code, out, _ = self.in_session(self.ios, "copilot-cli", claude=False)
+        self.assertEqual(code, 0, out)
+        self.assertIn("Tugboat setup check, inside a session of GitHub Copilot in VS Code", out)
+        self.assertIn("You named GitHub Copilot CLI. The hook that ran belongs to GitHub Copilot in VS Code, so the result is recorded for that tool.", out)
+        part = self.session_part(self.ios)
+        self.assertIn("- GitHub Copilot in VS Code: the hooks ran in its session", part)
+        self.assertIn("- GitHub Copilot CLI has not been checked inside a session", part)
+
+    def test_copilot_cli_is_the_copilot_that_does_not_name_itself(self):
+        code, out, _ = self.in_session(self.android, "copilot-cli", claude=False)
+        self.assertEqual(code, 0, out)
+        self.assertIn("inside a session of GitHub Copilot CLI", out)
+        self.assertEqual(observed.surface_of({"transcript_path": "/t"}, {"AI_AGENT": "github_copilot_vscode_agent"}), "claude-code")
+        self.assertEqual(observed.surface_of({}, {"AI_AGENT": "claude-code_2-1-325_harness"}), "copilot-cli")
+        self.assertEqual(observed.surface_of({}, {}), "copilot-cli")
+
+    def test_a_mark_from_another_moment_or_another_command_does_not_count(self):
+        observed.record_hook(self.ios, "claude-code", "probe", "s1", datetime.now(timezone.utc) - timedelta(minutes=10))
+        self.assertEqual(self.tug(self.ios, "doctor", "observe", "--surface", "claude-code")[0], 1)
+        (self.ios / ".tugboat/observed.json").unlink()
+        self.assertEqual(hook.pre_tool_use(self.payload(self.ios, tool_name="Bash", tool_input={"command": "ls"})), "")
+        self.assertEqual(hook.pre_tool_use(self.payload(self.ios, tool_name="Bash", tool_input={"command": "tug doctor"})), "")
+        self.assertFalse((self.ios / ".tugboat/observed.json").exists())
+        self.assertIn("NOT RUNNING", self.tug(self.ios, "doctor", "observe", "--surface", "claude-code")[1])
+
+    def test_a_session_that_started_elsewhere_is_advisory_not_a_failure(self):
+        hook.session_start(self.payload(self.ios, "earlier"))
+        code, out, _ = self.in_session(self.ios, "claude-code", session="later", start=False)
+        self.assertEqual(code, 0, out)
+        self.assertIn("- The session-start hook was not seen in this session.", out)
+        part = self.session_part(self.ios)
+        self.assertIn("Advisory: 1\n- Claude Code: the check before each action ran, and the session-start hook was not seen in the same session.", part)
+
+    def test_a_connection_that_did_not_answer_fails_and_one_that_was_not_tried_is_untested(self):
+        code, out, _ = self.in_session(self.ios, "claude-code", tracker="failed", github="none")
+        self.assertEqual(code, 1)
+        self.assertIn("- Tracker connection: did not answer, as you reported.", out)
+        code, out = self.doctor(self.ios)
+        self.assertEqual(code, 1)
+        part = out[out.index("== Observed in a session") :]
+        self.assertIn("- Claude Code: the tracker connection did not answer, as its agent reported.\n  To repair: Connect the tracker in that tool, then run the skill again.", part)
+        self.assertIn("- Claude Code: the GitHub connection was not tried, as its agent reported.", part)
+
+    def test_a_check_from_long_ago_no_longer_counts(self):
+        old = (datetime.now(timezone.utc) - timedelta(days=45)).isoformat(timespec="seconds").replace("+00:00", "Z")
+        observed.record_check(self.ios, observed.Check("claude-code", old, "0.20.0", True, True, "ok", "ok"))
+        part = self.session_part(self.ios)
+        self.assertIn("- Claude Code was last checked inside a session 45 days ago, which is too long ago to count.", part)
+        self.assertNotIn("the hooks ran", part)
+
+    def test_only_the_projects_agent_tools_are_listed_and_outside_a_set_up_repo_the_check_refuses(self):
+        self.assertEqual([check.text[:11] for check in doctor.check_sessions(self.ios, ["claude-code"])], ["Claude Code"])
+        other = self.app("other", {"Shop.xcodeproj/project.pbxproj": "// p\n"}, "acme/other")
+        code, _, err = self.tug(other, "doctor", "observe", "--surface", "claude-code")
+        self.assertEqual(code, 1)
+        self.assertIn("this repo is not set up with Tugboat", err)
+        code, _, err = self.tug(self.ios, "doctor", "observe")
+        self.assertEqual(code, 1)
+        self.assertIn("needs --surface", err)
+
+    def test_a_broken_record_reads_as_nothing_seen_and_a_mark_that_cannot_be_written_stops_nothing(self):
+        (self.ios / ".tugboat/observed.json").write_text("{ broken", encoding="utf-8")
+        self.assertEqual(observed.read(self.ios), {})
+        self.assertIsNone(observed.last_check(self.ios, "claude-code"))
+        observed.record_hook(self.tmp / "no-such-repo", "claude-code", "probe", "s1")
+        self.assertIn("has not been checked inside a session", self.session_part(self.ios))
+
+    def test_the_skill_ships_with_the_tool_and_names_the_command_and_the_three_tools(self):
+        text = (self.ios / ".claude/skills/tug-setup-check/SKILL.md").read_text(encoding="utf-8")
+        fields, body = frontmatter.parse(text)
+        self.assertEqual(formats.validate_skill_header(fields)["name"], doctor.SKILL)
+        self.assertIn("tug doctor observe --surface <name> --tracker <result> --github <result>", body)
+        for name in observed.SURFACES:
+            self.assertIn(f"`{name}`", body)
+        for answer in observed.ANSWERS:
+            self.assertIn(f"`{answer}`", body)
+        self.assertIn("Do not change a setting, trust a folder, or install anything yourself.", body)
+
+
+class CheckCommandTests(unittest.TestCase):
+    def test_the_check_command_is_recognised_however_tug_is_called(self):
+        for command in (
+            "tug doctor observe --surface claude-code",
+            "/Users/pat/.local/bin/tug doctor observe --surface copilot-cli --tracker ok",
+            "cd /repo && tug doctor observe --surface copilot-vscode",
+        ):
+            with self.subTest(command=command):
+                self.assertTrue(hook.is_check_command(command))
+        for command in ("tug doctor", "echo tug doctor observe > note", "tug sync", "doctor observe", "tug doctor 'observe", "mytug doctor observe"):
+            with self.subTest(command=command):
+                self.assertEqual(hook.is_check_command(command), command == "echo tug doctor observe > note")
 
 
 class ProgramTests(unittest.TestCase):

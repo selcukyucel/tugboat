@@ -38,7 +38,7 @@ The other ways are on [uv's installation page](https://docs.astral.sh/uv/getting
 **2. Install Tugboat.**
 
 ```sh
-uv tool install git+https://github.com/selcukyucel/tugboat@v0.26.0
+uv tool install git+https://github.com/selcukyucel/tugboat@v0.27.0
 tug version
 ```
 
@@ -87,6 +87,8 @@ What does the Tugboat sync report from the start of this session say?
 ```
 
 The agent should quote a report that starts with `Tugboat sync report` and names the team repo and its revision. Then the hooks work in that tool.
+
+To have it checked and recorded, ask the agent to run the skill `tug-setup-check`. It shows whether the hooks really run in that tool, and whether its tracker connection and its GitHub connection answer. `tug doctor` then shows the result. See "Setup check".
 
 | Agent tool | What it needs | When it is missing |
 |---|---|---|
@@ -138,7 +140,8 @@ One machine can serve several projects. Each project's minimum is checked in tha
 | `tug decision status`, `propose` | Lists the decision records an agent drafted, and proposes them as a pull request | Works. Not yet run in an agent session. |
 | `tug protected [path...]` | Says whether a file or folder in an app repo is a protected path, and why | Works |
 | `tug status` | Prints the session brief | Not built yet |
-| `tug doctor` | Checks that this machine and this app repo are ready, from what is on disk | Works. What happens inside an agent session is not checked yet. |
+| `tug doctor` | Checks that this machine and this app repo are ready: what is configured on disk, and what was seen working in a session | Works |
+| `tug doctor observe` | The part of the setup check that an agent runs inside a session, through the skill `tug-setup-check` | Works |
 | `tug update` | Updates `tug` to the newest release | Works |
 | `tug expire` | Removes records older than six months, after confirmation | Not built yet |
 | `tug remove` | Takes Tugboat out of a repo, or out of every repo on the machine | Not built yet. See "Remove Tugboat" for the steps by hand. |
@@ -511,8 +514,8 @@ Each line says how it is known: **seen** in a real session, **documented** by th
 
 ### When no check runs at all
 
-- Copilot CLI loads no hook from a folder it does not trust. It prints one warning line and goes on. Tugboat reports nothing. (Seen.)
-- VS Code runs no hook in a workspace it does not trust. Nothing reports it. (Documented. Seen once as a session where nothing happened.)
+- Copilot CLI loads no hook from a folder it does not trust. It prints one warning line and goes on. No hook runs, so nothing is reported in the session. `tug doctor` reports the folder. (Seen.)
+- VS Code runs no hook in a workspace it does not trust. Nothing reports it in the session. The skill `tug-setup-check` shows it. (Documented. Seen once as a session where nothing happened.)
 - Hooks in VS Code are a preview feature there. They can change or go away. (Documented.)
 - In a Git worktree of an app repo nothing is checked, because Tugboat's folder is not in a worktree. (By design.)
 - In a repo where `tug init` has not run, nothing is checked. (By design.)
@@ -749,7 +752,7 @@ Changed in the team repo since this repo's last sync (bb959ef to 9e2ae27):
 | File | What it is |
 |---|---|
 | `.claude/rules/tugboat.md` | The instruction file. It tells the agent where the team content is and how to use it, and lists the rules that apply in this repo. |
-| `.claude/skills/<name>/` | Each skill from the team repo that fits the repo's platform, and the three skills that ship with Tugboat: `tug-criteria-source`, `tug-capture-notes`, `tug-decision-record` |
+| `.claude/skills/<name>/` | Each skill from the team repo that fits the repo's platform, and the four skills that ship with Tugboat: `tug-criteria-source`, `tug-capture-notes`, `tug-decision-record`, `tug-setup-check` |
 | `.claude/agents/<name>.md` | Each approved agent definition from the team repo |
 | `.claude/settings.local.json` | Tugboat adds two hooks here: one starts each session with a sync, one checks each action before the agent makes it. It also adds one "ask" rule for each protected path. |
 
@@ -769,7 +772,14 @@ At the start of a session the hook runs a sync and hands its report to the agent
 tug doctor
 ```
 
-Run it inside an app repo. It reads files and asks installed programs for their version. It changes nothing and needs no network. Outside an app repo it checks the machine only.
+Run it inside an app repo. Outside an app repo it checks the machine only. It needs no network, and it changes nothing.
+
+The report has two parts, because configured is not the same as working:
+
+| Part | Where it comes from |
+|---|---|
+| On disk | Files, and the version each installed program reports |
+| Observed in a session | What an agent tool's own session showed, when its agent ran the skill `tug-setup-check` |
 
 Every check ends in one of four results, and they are reported apart:
 
@@ -809,7 +819,36 @@ What it checks:
 - **When the team has not listed its MCP servers yet**, nothing is compared, and that is untested too.
 - **Agent definitions** are read from `.claude/agents/` and `.github/agents/` in the repo.
 
-Not checked yet: what happens inside an agent session, such as whether a hook really fires and whether the tracker connection answers. And the scheme, the test target, or the JDK version a project needs, which wait for the build and test profile.
+Not checked yet: the scheme, the test target, or the JDK version a project needs. They wait for the build and test profile.
+
+### Inside a session
+
+An agent tool can skip Tugboat's hooks and show no error. Copilot CLI does in a folder it does not trust. VS Code does in a workspace it does not trust. The files on disk look the same either way. So this part is run by the agent, inside a session of each agent tool:
+
+```
+Run the skill tug-setup-check.
+```
+
+The agent then:
+
+1. names the agent tool it runs in
+2. reads one item through the tracker connection, and one through the GitHub connection
+3. runs `tug doctor observe` with its shell tool, and passes on what it prints
+4. runs `tug doctor`, and tells the developer what failed and how each line says to repair it
+
+How the hooks are seen: each hook leaves a mark when it runs, in `.tugboat/observed.json`. The hook before a tool call leaves one when the command is `tug doctor observe`. That command then looks for a mark that is at most two minutes old.
+
+| What `tug doctor observe` finds | Result |
+|---|---|
+| A fresh mark | The hooks run in this agent tool. The mark also says which tool it is, whatever the agent named. |
+| No fresh mark | "Hooks: NOT RUNNING", with the usual cause for that tool and the repair. `tug doctor` then shows the tool as configured on disk and failed in a session. |
+| The session-start mark is from another session | Advisory. The session may have started before the repo was set up. |
+
+- **The connections are what the agent reported**: `ok`, `failed`, or `none` when it did not try. A connection that did not answer fails the check. One that was not tried is untested.
+- **Each agent tool needs its own run.** A tool that never ran the skill is untested, not passed.
+- **A result older than 30 days no longer counts.** It is shown as untested.
+- **Typed by hand in a terminal, `tug doctor observe` finds no mark**, because no agent tool ran a hook. It is meant for the agent.
+- **How the tools are told apart:** Claude Code sends the path of its transcript to a hook. VS Code names itself in the hook's environment (`AI_AGENT`). A Copilot that does neither is Copilot CLI.
 
 ## Remove Tugboat
 

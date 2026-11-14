@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Any, NamedTuple
 from urllib.parse import urlsplit
 
-from tugboat import aitools, apprepo, appsync, aiuse, detect, hostfiles, paths, permissions, profile, releases, settingsmerge, sync, teamcopy, update
+from tugboat import aitools, apprepo, appsync, aiuse, detect, hostfiles, observed, paths, permissions, profile, releases, settingsmerge, sync, teamcopy, update
 from tugboat.address import TeamRepoAddress, parse_team_repo_address
 from tugboat.errors import DataError, TugError
 from tugboat.gitrun import GitError, git
@@ -33,6 +33,10 @@ from tugboat.strict_json import parse_json
 from tugboat.version import installed_version, parse_version
 
 PASSED, FAILED, UNTESTED, ADVISORY = "passed", "failed", "untested", "advisory"
+DISK, SESSION = "disk", "session"  # where a result comes from: files on disk, or what a session showed
+SKILL = "tug-setup-check"
+OBSERVE = "tug doctor observe"
+STALE_DAYS = 30
 ORDER = ((FAILED, "Failed"), (UNTESTED, "Untested"), (ADVISORY, "Advisory"), (PASSED, "Passed"))
 MIN_CLAUDE_CODE = (2, 1, 295)  # the first version that knows "onFailure" in a hook entry
 PROGRAM_TIMEOUT = 15.0
@@ -46,6 +50,7 @@ class Check(NamedTuple):
     result: str  # PASSED, FAILED, UNTESTED, or ADVISORY
     text: str  # what was found, in one or two sentences
     fix: str = ""  # what repairs it
+    area: str = DISK  # DISK: read from files. SESSION: seen inside an agent session.
 
 
 class Report(NamedTuple):
@@ -225,7 +230,7 @@ def check_vscode(repo: Path | None) -> list[Check]:
             Check(
                 UNTESTED,
                 "Whether VS Code trusts this workspace cannot be read from disk. In a workspace it does not trust, no hook runs and nothing reports it. "
-                "Ask the agent in VS Code for the Tugboat sync report.",
+                f"The check inside a session shows it: ask the agent in VS Code to run the skill `{SKILL}`.",
             )
         )
     return checks
@@ -575,29 +580,124 @@ def run(start: str | os.PathLike[str] = ".") -> Report:
     checks += check_project(repo, address, working, problem)
     checks += check_mcp_servers(repo, surfaces)
     checks += check_agents(repo)
+    checks += check_sessions(repo, surfaces)
     project = f"project '{working.profile['project']}'" if working is not None and working.profile else "no project profile"
     kind = f", {detect.PLATFORM_NAMES[platform]}" if platform in detect.PLATFORM_NAMES else ""
     return Report(repo, (f"Repo: {repo} ({project}{kind})", f"Team repo: {address.url}"), tuple(checks))
 
 
 def render(report: Report) -> str:
-    lines = ["Tugboat setup check, on disk", *report.heading]
-    lines.append("It read files and asked installed programs for their version. It changed nothing. It does not see inside an agent session.")
-    for result, title in ORDER:
-        group = [check for check in report.checks if check.result == result]
-        if not group:
+    lines = ["Tugboat setup check", *report.heading]
+    parts = (
+        (DISK, "On disk", "Read from files and from installed programs. Nothing was changed."),
+        (SESSION, "Observed in a session", f"What an agent tool's own session showed, when its agent ran the skill `{SKILL}`. Configured on disk is not the same as seen working."),
+    )
+    for area, title, explanation in parts:
+        found = [check for check in report.checks if check.area == area]
+        if not found:
             continue
-        lines += ["", f"{title}: {len(group)}"]
-        for check in group:
-            lines.append(f"- {check.text}")
-            if check.fix:
-                lines.append(f"  To repair: {check.fix}")
+        lines += ["", f"== {title}", explanation]
+        for result, name in ORDER:
+            group = [check for check in found if check.result == result]
+            if not group:
+                continue
+            lines += ["", f"{name}: {len(group)}"]
+            for check in group:
+                lines.append(f"- {check.text}")
+                if check.fix:
+                    lines.append(f"  To repair: {check.fix}")
     counts = {result: sum(check.result == result for check in report.checks) for result, _ in ORDER}
     lines.append("")
     if counts[FAILED]:
         lines.append(f"Not ready: {_count(counts[FAILED], 'check')} failed.")
     elif counts[UNTESTED]:
-        lines.append(f"Nothing failed. {_count(counts[UNTESTED], 'thing')} could not be tested from here, so this is not a full pass.")
+        lines.append(f"Nothing failed. {_count(counts[UNTESTED], 'thing')} could not be tested, so this is not a full pass.")
     else:
         lines.append("Ready: every check passed.")
     return "\n".join(lines)
+
+
+# ---- inside a session
+
+_NO_HOOK_CAUSE = {
+    observed.CLAUDE: "Hooks may be switched off in Claude Code's settings (`disableAllHooks`), or the session was started outside this repo.",
+    observed.COPILOT_CLI: "The usual cause is that Copilot CLI does not trust this folder. It then prints one warning line at the start and runs no hook.",
+    observed.COPILOT_VSCODE: "The usual cause is that VS Code does not trust this workspace. It then runs no hook and reports nothing.",
+}
+_NO_HOOK_FIX = {
+    observed.CLAUDE: "Start `claude` in this repo's folder, check that hooks are not switched off, and run the skill again.",
+    observed.COPILOT_CLI: "Start `copilot` in this folder and choose to trust it and remember it. Then run the skill again in a new session.",
+    observed.COPILOT_VSCODE: "In VS Code, trust this workspace (command \"Workspaces: Manage Workspace Trust\"). Then run the skill again in a new chat.",
+}
+_CONNECTION_WORDS = {observed.OK: "answered", observed.FAILED: "did not answer", observed.NONE: "was not tried"}
+
+
+def check_sessions(repo: Path, surfaces: list[str]) -> list[Check]:
+    """What each of the project's agent tools showed in a session of its own."""
+    checks = []
+    for surface in surfaces:
+        if surface not in observed.NAMES:
+            continue
+        name = observed.NAMES[surface]
+        again = f"In a session of that tool in this repo, ask the agent to run the skill `{SKILL}`."
+        seen = observed.last_check(repo, surface)
+        if seen is None:
+            checks.append(Check(UNTESTED, f"{name} has not been checked inside a session in this repo, so whether its hooks really run is not known. {again}", area=SESSION))
+            continue
+        when = sync.age(seen.at)
+        if observed.days_since(seen.at) > STALE_DAYS:
+            checks.append(Check(UNTESTED, f"{name} was last checked inside a session {when}, which is too long ago to count. {again}", area=SESSION))
+            continue
+        if not seen.hooks_fired:
+            checks.append(Check(FAILED, f"{name}: no hook ran in its session (checked {when}). So there nothing syncs at the start and no action is checked. {_NO_HOOK_CAUSE[surface]}", _NO_HOOK_FIX[surface], SESSION))
+            continue
+        checks.append(Check(PASSED, f"{name}: the hooks ran in its session (checked {when}, with tug {seen.tool_version}).", area=SESSION))
+        if not seen.session_start:
+            checks.append(Check(ADVISORY, f"{name}: the check before each action ran, and the session-start hook was not seen in the same session. The session may have started before this repo was set up, or have been resumed.", area=SESSION))
+        for label, answer in (("tracker", seen.tracker), ("GitHub", seen.github)):
+            text = f"{name}: the {label} connection {_CONNECTION_WORDS[answer]}, as its agent reported."
+            if answer == observed.OK:
+                checks.append(Check(PASSED, text, area=SESSION))
+            elif answer == observed.FAILED:
+                checks.append(Check(FAILED, text, f"Connect {'the tracker' if label == 'tracker' else 'GitHub'} in that tool, then run the skill again.", SESSION))
+            else:
+                checks.append(Check(UNTESTED, text, area=SESSION))
+    return checks
+
+
+def observe(start: str | os.PathLike[str], surface: str, tracker: str, github: str) -> tuple[bool, str]:
+    """The check an agent starts from inside its session. Returns (everything worked, the report for the agent).
+
+    The agent runs `tug doctor observe` with its shell tool. When the agent
+    tool runs Tugboat's hooks, the hook before that tool call has just left a
+    mark. No fresh mark means that no hook runs in that session.
+    """
+    repo = apprepo.find_app_repo(start)
+    if teamcopy.read_state(repo) is None:
+        raise TugError("this repo is not set up with Tugboat. Run `tug init` in it first, in a terminal.")
+    probe = observed.fresh_probe(repo)
+    lines = []
+    started = False
+    if probe is not None:
+        seen_surface, _session, started = probe
+        if seen_surface != surface:
+            lines.append(f"You named {observed.NAMES[surface]}. The hook that ran belongs to {observed.NAMES[seen_surface]}, so the result is recorded for that tool.")
+        surface = seen_surface
+    name = observed.NAMES[surface]
+    observed.record_check(repo, observed.Check(surface, observed.stamp_now(), str(installed_version()), probe is not None, started, tracker, github))
+    lines.insert(0, f"Tugboat setup check, inside a session of {name}")
+    if probe is None:
+        lines.append(f"- Hooks: NOT RUNNING. No hook ran before this command. So in this session nothing syncs at the start, and no action is checked. {_NO_HOOK_CAUSE[surface]}")
+        lines.append(f"  To repair: {_NO_HOOK_FIX[surface]}")
+        lines.append("  This is only true when the agent ran this command with its shell tool, inside a session. Typed by hand in a terminal, no hook runs either.")
+    else:
+        lines.append("- Hooks: the check before each action ran for this command, so this agent tool loads Tugboat's hooks.")
+        if started:
+            lines.append("- The session-start hook ran in this session too.")
+        else:
+            lines.append("- The session-start hook was not seen in this session. The session may have started before this repo was set up, or have been resumed.")
+    for label, answer in (("Tracker", tracker), ("GitHub", github)):
+        lines.append(f"- {label} connection: {_CONNECTION_WORDS[answer]}, as you reported.")
+    lines.append(f"This is recorded in `{apprepo.LOCAL_FOLDER}/{observed.FILE}`. `tug doctor` shows it beside what is configured on disk.")
+    lines.append("Tell the developer what this says, as it is. Do not repair anything yourself.")
+    return probe is not None and observed.FAILED not in (tracker, github), "\n".join(lines)

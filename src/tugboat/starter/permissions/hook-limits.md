@@ -8,8 +8,8 @@ Each line says how it is known: **seen** in a real session, **documented** by th
 
 ## When no check runs at all
 
-- Copilot CLI loads no hook from a folder it does not trust. It prints one warning line and goes on. Tugboat reports nothing. (Seen.)
-- VS Code runs no hook in a workspace it does not trust. Nothing reports it. (Documented. Seen once as a session where nothing happened.)
+- Copilot CLI loads no hook from a folder it does not trust. It prints one warning line and goes on. No hook runs, so nothing is reported in the session. `tug doctor` reports the folder. (Seen.)
+- VS Code runs no hook in a workspace it does not trust. Nothing reports it in the session. The skill `tug-setup-check` shows it. (Documented. Seen once as a session where nothing happened.)
 - Hooks in VS Code are a preview feature there. They can change or go away. (Documented.)
 - In a Git worktree of an app repo nothing is checked, because Tugboat's folder is not in a worktree. (By design.)
 - In a repo where `tug init` has not run, nothing is checked. (By design.)

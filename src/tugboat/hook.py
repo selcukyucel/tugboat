@@ -64,6 +64,10 @@ def session_start(raw: str) -> str:
             return ""  # not a repo Tugboat was set up in: say nothing
     except TugError:
         return ""
+    from tugboat import observed
+
+    # A mark that this hook ran, for the setup check inside a session.
+    observed.record_hook(repo, observed.surface_of(payload), "session_start", payload.get("session_id"))
     try:
         from tugboat import appsync  # heavy, and only needed at session start
 
@@ -91,6 +95,19 @@ def decision_output(action: str, reason: str) -> str:
     if action == "deny":
         output = {"permissionDecision": action, "permissionDecisionReason": reason, **output}
     return json.dumps(output, ensure_ascii=False)
+
+
+def is_check_command(command: str) -> bool:
+    """True for a shell command that runs `tug doctor observe`, the setup check inside a session."""
+    if "doctor" not in command:
+        return False
+    import shlex
+
+    try:
+        words = shlex.split(command)
+    except ValueError:
+        return False
+    return any(os.path.basename(word) == "tug" and words[index + 1 : index + 3] == ["doctor", "observe"] for index, word in enumerate(words))
 
 
 def _current_branch(folder: str) -> str | None:
@@ -130,7 +147,16 @@ def pre_tool_use(raw: str) -> str:
             return ""  # the one command that rebuilds the list must not be held up by its absence
         raise DataError(f"the list of protected paths for this repo ({permissions.COMPILED}) is missing or cannot be read. Run `{REPAIR_COMMAND}`")
     decision = pretool.decide(payload, repo, compiled, _current_branch, compiled.shared_branches)
-    return "" if decision.action == pretool.ALLOW else decision_output(decision.action, decision.reason)
+    if decision.action != pretool.ALLOW:
+        return decision_output(decision.action, decision.reason)
+    tool_input = payload.get("tool_input")
+    command = tool_input.get("command") if isinstance(tool_input, dict) else tool_input
+    if isinstance(command, str) and is_check_command(command):
+        from tugboat import observed
+
+        # The setup check inside a session looks for this mark: it shows that this hook runs in this agent tool.
+        observed.record_hook(repo, observed.surface_of(payload), "probe", payload.get("session_id"))
+    return ""
 
 
 def main(event: str) -> int:

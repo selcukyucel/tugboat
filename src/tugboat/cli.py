@@ -544,9 +544,24 @@ def _team_propose(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
-def _doctor(_args: argparse.Namespace) -> int:
+def _configure_doctor(parser: argparse.ArgumentParser) -> None:
+    from tugboat import observed
+
+    parser.add_argument("action", nargs="?", choices=("observe",), help="`observe`: the check an agent runs with its shell tool inside a session, through the skill `tug-setup-check`")
+    parser.add_argument("--surface", choices=observed.SURFACES, help="with `observe`: the agent tool the session runs in")
+    parser.add_argument("--tracker", choices=observed.ANSWERS, default=observed.NONE, help="with `observe`: whether the tracker connection answered when the agent tried it")
+    parser.add_argument("--github", choices=observed.ANSWERS, default=observed.NONE, help="with `observe`: whether the GitHub connection answered when the agent tried it")
+
+
+def _doctor(args: argparse.Namespace) -> int:
     from tugboat import doctor
 
+    if args.action == "observe":
+        if not args.surface:
+            raise TugError("`tug doctor observe` needs --surface: claude-code, copilot-cli, or copilot-vscode.")
+        worked, text = doctor.observe(".", args.surface, args.tracker, args.github)
+        print(text)
+        return EXIT_OK if worked else EXIT_ERROR
     report = doctor.run(".")
     print(doctor.render(report))
     return EXIT_ERROR if report.failed else EXIT_OK
@@ -563,7 +578,7 @@ COMMANDS: tuple[Command, ...] = (
     Command("decision", "List and propose the decision records an agent drafted: `tug decision status`, `propose`", _decision, _configure_decision),
     Command("protected", "Say whether a file or folder in this app repo is a protected path, and why", _protected, _configure_protected),
     Command("status", "Print the session brief"),
-    Command("doctor", "Check that this machine and this app repo are ready, from what is on disk", _doctor),
+    Command("doctor", "Check that this machine and this app repo are ready, from what is on disk", _doctor, _configure_doctor),
     Command("update", "Update tug to the newest release", _update, _configure_update),
     Command("expire", "Remove records older than six months, after confirmation"),
     Command("remove", "Take Tugboat out of this repo, or out of every repo on this machine"),
