@@ -28,6 +28,10 @@ MAX_NOTE_BYTES = 512 * 1024
 MAX_LISTED = 30  # notes named in the instruction file. The rest are counted, and `tug notes` finds them.
 MAX_PROBLEMS = 3  # notes that were not loaded, named one by one. The rest are counted.
 SKIPPED_NAMES = frozenset({"README.md"})
+CAPTURE_ADVICE = (
+    "Do not stop the work to write a note. When the developer asks to capture what was learned, use the skill `tug-capture-notes`: "
+    "it drafts notes for what you had to find out, and the developer accepts, edits, or drops each one."
+)
 
 
 class Note(NamedTuple):
@@ -122,10 +126,12 @@ def render(knowledge: Knowledge, github: str | None) -> str:
     lines = ["## Knowledge notes", ""]
     notes = notes_of(knowledge.notes, github)
     if not notes:
-        lines.append(
+        lines += [
             "The team repo has no knowledge note about this repo, so there is none to read. "
-            "A note for another repo does not apply here."
-        )
+            "A note for another repo does not apply here.",
+            "",
+            CAPTURE_ADVICE,
+        ]
         return "\n".join(lines) + "\n"
     count = "1 note" if len(notes) == 1 else f"{len(notes)} notes"
     lines += [
@@ -142,5 +148,7 @@ def render(knowledge: Knowledge, github: str | None) -> str:
         "It names the notes that cover them. Read those notes. Do not read the other notes.",
         "A note says what was true on its last-verified day. When a note and the code disagree, the code is right: "
         "tell the developer that the note is out of date, and name its owner.",
+        "",
+        CAPTURE_ADVICE,
     ]
     return "\n".join(lines) + "\n"

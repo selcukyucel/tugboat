@@ -290,6 +290,58 @@ def _notes(args: argparse.Namespace) -> int:
     return EXIT_ERROR if failed else EXIT_OK
 
 
+def _configure_capture(parser: argparse.ArgumentParser) -> None:
+    actions = parser.add_subparsers(dest="action", metavar="ACTION", required=True)
+    actions.add_parser("status", help="list the draft notes and where each stands", description="List the draft notes in this app repo, and the proposals dropped before.")
+    accept = actions.add_parser("accept", help="mark drafts as accepted by the developer", description="Mark drafts as accepted, as they are now. A draft edited later must be accepted again.")
+    accept.add_argument("names", nargs="+", metavar="NAME", help="a draft, named by its path under knowledge/, such as auth/token-refresh.md")
+    drop = actions.add_parser("drop", help="remove drafts the developer does not want", description="Remove drafts and remember their content, so the same proposal is not offered again.")
+    drop.add_argument("names", nargs="+", metavar="NAME", help="a draft, named by its path under knowledge/")
+    propose = actions.add_parser("propose", help="open one pull request with the accepted drafts", description="Open one pull request in the team repo with every accepted draft. Nothing is merged: a person reviews and merges it in GitHub.")
+    propose.add_argument("--task", metavar="TEXT", help="the task the notes come from, such as a story key. It goes into the pull request.")
+    propose.add_argument("--yes", action="store_true", help="open the pull request without being asked")
+
+
+def _capture(args: argparse.Namespace) -> int:
+    from tugboat import apprepo, capture, detect, teamcopy, teampr
+    from tugboat.address import parse_team_repo_address
+
+    repo = apprepo.find_app_repo(".")
+    state = teamcopy.read_state(repo)
+    if state is None:
+        raise TugError("this folder is not set up with Tugboat. Run `tug init` inside the app repo first.")
+    remote = detect.remote_address(repo)
+    github = remote.slug if remote else None
+    if args.action == "status":
+        print(capture.render_status(repo, capture.scan(repo, github)))
+        return EXIT_OK
+    if args.action == "accept":
+        for draft in capture.accept(repo, github, args.names):
+            print(f"Accepted {draft.name}. It goes into the next pull request, as it is now.")
+        return EXIT_OK
+    if args.action == "drop":
+        for draft in capture.drop(repo, github, args.names):
+            print(f"Dropped {draft.name}. The draft is removed, and the same content will not be offered again.")
+        return EXIT_OK
+    address = parse_team_repo_address(state["team_repo"])
+    if not args.yes:
+        ready = [draft for draft in capture.scan(repo, github) if draft.status == capture.ACCEPTED]
+        if not ready:
+            raise TugError("no draft is accepted, so there is nothing to propose. `tug capture status` lists the drafts.")
+        print(f"This opens one pull request in {address.slug} with {len(ready)} note{'' if len(ready) == 1 else 's'}:")
+        for draft in ready:
+            print(f"  {draft.team_path}")
+        if not sys.stdin.isatty():
+            raise TugError("a pull request needs a person to confirm it. Run this in a terminal, or pass --yes. Nothing was proposed.")
+        if input("Open this pull request? [y/N] ").strip().lower() not in {"y", "yes"}:
+            raise TugError("stopped. Nothing was proposed.")
+    outcome = capture.propose(repo, github, address, task=args.task)
+    print(teampr.render(outcome.proposal))
+    if outcome.left:
+        print(f"{len(outcome.left)} draft{'' if len(outcome.left) == 1 else 's'} stayed in {capture.DRAFTS}/, because {'it was' if len(outcome.left) == 1 else 'they were'} not accepted: {', '.join(draft.name for draft in outcome.left)}.")
+    return EXIT_OK
+
+
 def _team_repo_of(option: str | None):  # noqa: ANN202 - the address type is imported late
     """The team repo a command works on: the one given, or the one this app repo is set up for."""
     from tugboat import apprepo, teamcopy
@@ -432,6 +484,7 @@ COMMANDS: tuple[Command, ...] = (
     Command("profile", "Show the project profile, or save where acceptance criteria are kept: `tug profile show`, `set-criteria`", _profile, _configure_profile),
     Command("owner", "Name the owner of a file or folder in this app repo, from the estate map", _owner, _configure_owner),
     Command("notes", "Name the knowledge notes that cover a file or folder in this app repo", _notes, _configure_notes),
+    Command("capture", "Keep, accept, drop, and propose the notes an agent drafted: `tug capture status`, `accept`, `drop`, `propose`", _capture, _configure_capture),
     Command("status", "Print the session brief"),
     Command("doctor", "Check that this machine and repo are ready"),
     Command("update", "Update tug to the newest release", _update, _configure_update),

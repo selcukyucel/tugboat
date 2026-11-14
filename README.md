@@ -22,7 +22,7 @@ Tugboat uses only the Python standard library. It has no third-party package at 
 ## Install
 
 ```sh
-uv tool install git+https://github.com/selcukyucel/tugboat@v0.16.0
+uv tool install git+https://github.com/selcukyucel/tugboat@v0.17.0
 tug version
 ```
 
@@ -66,6 +66,7 @@ One machine can serve several projects. Each project's minimum is checked in tha
 | `tug sync` | Brings the team repo clone, an app repo's copy of it, and the agent tool files up to date | Works |
 | `tug owner <path>` | Names the owner of a file or folder in an app repo, from the estate map | Works |
 | `tug notes [path...]` | Names the knowledge notes that cover a file or folder in an app repo | Works |
+| `tug capture status`, `accept`, `drop`, `propose` | Keeps the notes an agent drafted, records the developer's decision on each, and proposes the accepted ones in one pull request | Works. Not yet run in an agent session. |
 | `tug status` | Prints the session brief | Not built yet |
 | `tug doctor` | Checks that this machine and repo are ready | Not built yet |
 | `tug update` | Updates `tug` to the newest release | Works |
@@ -233,6 +234,35 @@ The message names the kind of secret and the line. It never repeats the secret. 
 The check is a pattern check. It can miss a secret with an unusual shape, and it does not replace a review of the pull request. The same patterns will be used for the hook that checks a write, and for task records.
 
 `tug team check` also warns when a note names a repo that is not in the project profile, because no agent would load it.
+
+## Knowledge capture
+
+During a task an agent finds things out that the code does not say. Capture turns those into knowledge notes, with the developer deciding on each one.
+
+It starts when the developer asks, for example "capture what you learned". The agent then follows the skill `tug-capture-notes`, which ships with the tool. The agent is told not to stop the work to write a note.
+
+1. The agent writes each proposed note as a draft file in the app repo, under `.tugboat/capture/knowledge/`. Git does not see that folder.
+2. `tug capture status` lists the drafts and where each stands. A draft that is not a valid note is named with the reason: a missing field, another repo, a date after today, a secret pattern, a chat transcript.
+3. The agent shows each draft to the developer, who accepts, edits, or drops it.
+4. `tug capture propose` opens one pull request in the team repo with every accepted draft. A person merges it. The proposed drafts are removed from the app repo.
+
+```sh
+tug capture status
+# Drafts in .tugboat/capture/knowledge/:
+# - auth/token-refresh.md: new. Not accepted and not dropped yet. "How login tokens are refreshed" (covers Sources/Auth/**)
+tug capture accept auth/token-refresh.md
+tug capture drop checkout/tax.md
+tug capture propose --task SHOP-123
+```
+
+- **Accepted means accepted as it is.** A draft that is edited after it was accepted must be accepted again. It does not go into a pull request before that.
+- **A dropped note does not come back.** Dropping removes the draft and remembers what it said: its title, its paths, and its text. A new draft with the same content is marked "dropped before" and is not offered again. Another file name, owner, date, or line breaks do not make it new. Other content does.
+- **The dropped list is shown to the agent**, so it does not write the same note again in other words. The tool cannot check a rewording. The agent is told not to do it.
+- **One pull request.** All accepted drafts go into one pull request. `--task` puts the task's name into it.
+- **A draft with the path of a note that is in the team repo** is proposed as a change to that note. A draft with the same content as the team repo's note is not proposed.
+- Without `--yes`, `tug capture propose` asks a person in a terminal before it opens the pull request.
+
+The decisions are kept in `.tugboat/capture.json` in the app repo, on that machine. Another machine does not know what was dropped here.
 
 ## Proposing a change to the team repo
 
