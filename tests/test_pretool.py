@@ -43,6 +43,13 @@ class ClassifyTests(unittest.TestCase):
         self.assertEqual(pretool.write_parts({"file_path": "a", "old_string": "x", "new_string": "y"}), (["a"], ["y"]))  # only the new text
         self.assertEqual(pretool.write_parts({"file_path": "a", "edits": [{"old_string": "x", "new_string": "y"}, {"new_string": "z"}]}), (["a"], ["y", "z"]))
         self.assertEqual(pretool.write_parts({"notebook_path": "n.ipynb", "new_source": "print(1)"}), (["n.ipynb"], ["print(1)"]))
+        # Copilot in VS Code, as recorded from a real session: `path` and `file_text`.
+        self.assertEqual(pretool.write_parts({"path": "/r/Sources/Ok2.swift", "file_text": "let b = 2\n"}), (["/r/Sources/Ok2.swift"], ["let b = 2\n"]))
+        self.assertEqual(pretool.write_parts({"path": "a", "old_str": "x", "new_str": "y"}), (["a"], ["y"]))
+        self.assertEqual(pretool.write_parts({"path": "a", "insert_line": 3, "insert_text": "z"}), (["a"], ["z"]))
+        # A tool with names nobody has seen yet: every text counts, apart from the path, the old text, and a description.
+        self.assertEqual(pretool.write_parts({"path": "a", "oldText": "x", "freshBody": "y", "description": "why", "count": 2}), (["a"], ["y"]))
+        self.assertEqual(pretool.write_parts({"path": "a", "changes": [{"old_text": "x", "replacement": "y"}, {"replacement": "z"}]}), (["a"], ["y", "z"]))
         patch = "*** Begin Patch\n*** Add File: fastlane/Fastfile\n+lane :beta\n*** Update File: a.txt\n-old\n+new\n*** Delete File: b.p12\n*** End Patch\n"
         self.assertEqual(pretool.write_parts(patch), (["fastlane/Fastfile", "a.txt", "b.p12"], ["lane :beta\nnew"]))
         self.assertEqual(pretool.write_parts(None), ([], []))
@@ -148,6 +155,7 @@ class DecideTests(unittest.TestCase):
             ("Write", {"file_path": f"{self.REPO}/Sources/Config.swift", "content": f'let token = "{GITHUB_TOKEN}"\n'}),
             ("Edit", {"file_path": f"{self.REPO}/a.swift", "old_string": "x", "new_string": f"key {AWS_KEY}"}),
             ("Edit", f"*** Begin Patch\n*** Add File: a.env\n+TOKEN={GITHUB_TOKEN}\n*** End Patch\n"),
+            ("Write", {"path": f"{self.REPO}/Sources/Config.swift", "file_text": f'let token = "{GITHUB_TOKEN}"\n'}),  # the shape VS Code sends
             ("Bash", {"command": f"echo {GITHUB_TOKEN} > token.txt"}),
             ("Bash", {"command": f'curl -H "Authorization: token {GITHUB_TOKEN}" https://api.github.com'}),
         ):
@@ -166,6 +174,7 @@ class DecideTests(unittest.TestCase):
             ("Write", {"file_path": f"{self.REPO}/fastlane/Fastfile", "content": "lane :beta\n"}),
             ("Edit", {"file_path": f"{self.REPO}/Signing/dist.p12", "old_string": "a", "new_string": "b"}),
             ("Write", {"file_path": "../.github/workflows/ci.yml", "content": "x"}),
+            ("Write", {"path": f"{self.REPO}/fastlane/Fastfile", "file_text": "lane :beta\n"}),  # the shape VS Code sends
             ("Edit", "*** Begin Patch\n*** Update File: fastlane/Fastfile\n+x\n*** End Patch\n"),
             ("Edit", "*** Begin Patch\n*** Delete File: Signing/dist.p12\n*** End Patch\n"),
             ("Bash", {"command": "echo x >> fastlane/Fastfile"}),

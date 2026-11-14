@@ -37,8 +37,10 @@ CLAUDE, COPILOT = "claude-code", "copilot"
 # Tool names, as the agent tools send them. Copilot sends its patch tool as "Edit" and its shell as "Bash".
 _WRITE_TOOL = re.compile(r"edit|write|create|patch|replace|notebook", re.IGNORECASE)
 _SHELL_TOOL = re.compile(r"bash|shell|terminal|command|exec", re.IGNORECASE)
+# The names under which the agent tools send a path. Claude Code: `file_path`, `notebook_path`. Copilot in VS Code: `path`.
+# The text to write has many names (`content`, `new_string`, `file_text`, ...), so it is not found by name: see _written_texts.
 _PATH_KEYS = ("file_path", "notebook_path", "path", "filePath")
-_TEXT_KEYS = ("content", "new_string", "new_source", "new_str", "text")
+_NOT_WRITTEN = frozenset({"description", "explanation", "reason", "mode", "encoding", "language"})
 _PATCH_FILE = re.compile(r"^\*\*\* (?:Add File|Update File|Delete File|Move to): (.+)$")
 
 # Shell commands that change the files they are given.
@@ -90,30 +92,41 @@ def _patch_parts(patch: str) -> tuple[list[str], list[str]]:
     return files, added
 
 
+def _written_texts(value: object, key: str = "") -> list[str]:
+    """Every text in a write tool's input that could end up in a file.
+
+    The names differ from tool to tool, and a new tool brings new ones. So
+    every text counts, apart from a path, a description, and the old text an
+    edit replaces: taking a secret out of a file must stay possible.
+    """
+    lowered = key.lower()
+    if key in _PATH_KEYS or lowered.startswith("old") or lowered in _NOT_WRITTEN:
+        return []
+    if isinstance(value, str):
+        return [value] if value else []
+    if isinstance(value, dict):
+        return [text for name, item in value.items() if isinstance(name, str) for text in _written_texts(item, name)]
+    if isinstance(value, list):
+        return [text for item in value for text in _written_texts(item, key)]
+    return []
+
+
 def write_parts(tool_input: object) -> tuple[list[str], list[str]]:
     """The paths a write tool is about to change, and the text it is about to write."""
-    paths: list[str] = []
-    texts: list[str] = []
     if isinstance(tool_input, str):
         files, added = _patch_parts(tool_input)
         return files, ["\n".join(added)] if added else []
     if not isinstance(tool_input, dict):
-        return paths, texts
-    for key in _PATH_KEYS:
-        if isinstance(tool_input.get(key), str):
-            paths.append(tool_input[key])
-    for key in _TEXT_KEYS:
-        if isinstance(tool_input.get(key), str):
-            texts.append(tool_input[key])
-    edits = tool_input.get("edits")
-    for edit in edits if isinstance(edits, list) else ():
-        if isinstance(edit, dict):
-            texts.extend(edit[key] for key in _TEXT_KEYS if isinstance(edit.get(key), str))
-    for key in ("patch", "input", "diff"):
-        if isinstance(tool_input.get(key), str) and "*** " in tool_input[key]:
-            files, added = _patch_parts(tool_input[key])
+        return [], []
+    paths = [tool_input[key] for key in _PATH_KEYS if isinstance(tool_input.get(key), str)]
+    texts = []
+    for key, value in tool_input.items():
+        if isinstance(value, str) and "*** Begin Patch" in value:
+            files, added = _patch_parts(value)  # a patch text inside a field: its files count, and only its added lines
             paths.extend(files)
             texts.append("\n".join(added))
+        elif isinstance(key, str):
+            texts.extend(_written_texts(value, key))
     return paths, texts
 
 

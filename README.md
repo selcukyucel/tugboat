@@ -22,7 +22,7 @@ Tugboat uses only the Python standard library. It has no third-party package at 
 ## Install
 
 ```sh
-uv tool install git+https://github.com/selcukyucel/tugboat@v0.22.0
+uv tool install git+https://github.com/selcukyucel/tugboat@v0.22.1
 tug version
 ```
 
