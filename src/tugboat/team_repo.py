@@ -145,6 +145,7 @@ def check_team_repo(root: str | os.PathLike[str]) -> Report:
         if folder.name not in formats.RULE_SCOPES:
             check.error(folder, f"is not a rule scope. Rules are kept for {', '.join(formats.RULE_SCOPES)} only. Other code, such as a backend, keeps its own rules elsewhere.")
     rule_ids: dict[str, str] = {}
+    rule_statuses: dict[str, str] = {}
     for scope in formats.RULE_SCOPES:
         for path in _markdown_files(root_path / "policies" / scope):
             rule = check.markdown(path, formats.validate_rule)
@@ -158,6 +159,7 @@ def check_team_repo(root: str | os.PathLike[str]) -> Report:
                 check.error(path, f"uses rule id {rule['id']}, which {rule_ids[rule['id']]} already uses")
             else:
                 rule_ids[rule["id"]] = check.rel(path)
+                rule_statuses[rule["id"]] = rule["status"]
 
     registered_repos = {repo["github"].lower() for repo in profile["app_repos"]} if profile else None
     for path in _markdown_files(root_path / "knowledge"):
@@ -197,8 +199,21 @@ def check_team_repo(root: str | os.PathLike[str]) -> Report:
                 check.error(folder, "has no SKILL.md")
                 continue
             skill = check.attempt(path, lambda path=path: formats.validate_skill_header(_read_markdown(path)[0]))
-            if skill is not None and skill["name"] != folder.name:
+            if skill is None:
+                continue
+            if skill["name"] != folder.name:
                 check.error(path, f"has name '{skill['name']}' and must be in a folder with that name")
+            named = formats.rule_ids_named(path.read_text(encoding="utf-8"))
+            if not named:
+                check.warning(path, "names no rule ID. A skill names the rules it applies, such as IOS-001.")
+            for rule_id in named:
+                if rule_id not in rule_ids:
+                    check.error(path, f"names rule {rule_id}, which is not in policies/")
+                elif rule_statuses[rule_id] != "adopted":
+                    check.warning(path, f"names rule {rule_id}, which is an example. An example rule is not applied.")
+            scopes = {formats.rule_scope(rule_id) for rule_id in named} & formats.PLATFORMS
+            if len(scopes) == 1 and profile and not any(repo["platform"] in scopes for repo in profile["app_repos"]):
+                check.warning(path, f"names only {next(iter(scopes))} rules, and the project profile has no {next(iter(scopes))} repo. No agent will get the skill.")
 
     order = {"error": 0, "warning": 1}
     return Report(check.files_checked, sorted(check.problems, key=lambda problem: (order[problem.level], problem.path)))

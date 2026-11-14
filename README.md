@@ -22,7 +22,7 @@ Tugboat uses only the Python standard library. It has no third-party package at 
 ## Install
 
 ```sh
-uv tool install git+https://github.com/selcukyucel/tugboat@v0.18.0
+uv tool install git+https://github.com/selcukyucel/tugboat@v0.19.0
 tug version
 ```
 
@@ -312,6 +312,27 @@ tug decision propose DEC-0003-use-swift-testing.md
 - Without `--yes`, the command asks a person in a terminal before it opens the pull request.
 
 Two pull requests that are open at the same time can both use the same new ID. The check on the team repo's `main` fails after the second merge, and one record is then renumbered by a pull request.
+
+## Skills
+
+A skill is a recipe that guides the agent through common work, such as a new screen. It is one folder in the team repo, `skills/<name>/`, with a `SKILL.md` inside. Sync installs the team's skills under `.claude/skills/` in each app repo.
+
+**A skill names the rule IDs it applies**, anywhere in its `SKILL.md`: `IOS-005`, `AND-005`, `COM-001`.
+
+**A skill is installed where its rules apply.**
+
+| The skill names | It is installed in |
+|---|---|
+| iOS rules, and no Android rule | iOS repos only |
+| Android rules, and no iOS rule | Android repos only |
+| Rules of both platforms, only company rules, or no rule | Every app repo |
+
+When a skill changes sides, the next sync removes it from the repos it no longer belongs to. The skills that ship with the tool, whose names start with `tug-`, go to every app repo.
+
+**`tug team check` checks the rule IDs.**
+
+- A skill that names a rule that is not in `policies/` fails the check. This catches a typo.
+- It warns when a skill names no rule ID, when it names a rule that is only an example, and when it is for a platform the project has no repo for.
 
 ## Proposing a change to the team repo
 

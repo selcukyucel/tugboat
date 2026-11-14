@@ -120,17 +120,22 @@ The report lists what changed in the team repo since the last sync, with the pat
 {rules_section}"""
 
 
-def _skill_units(copy: Path, problems: list[str]) -> list[_Unit]:
+def _skill_units(copy: Path, problems: list[str], platform: str | None = None) -> list[_Unit]:
+    """The team's skills for this repo. A skill for the other platform only is left out."""
     units = []
     folder = copy / "skills"
     for skill in sorted(item for item in folder.iterdir() if item.is_dir()) if folder.is_dir() else ():
         try:
-            fields, _ = frontmatter.parse((skill / "SKILL.md").read_text(encoding="utf-8"))
+            text = (skill / "SKILL.md").read_text(encoding="utf-8")
+            fields, _ = frontmatter.parse(text)
             if formats.validate_skill_header(fields)["name"] != skill.name:
                 raise DataError("its name does not match its folder")
         except (OSError, UnicodeDecodeError, DataError) as error:
             problems.append(f"skill '{skill.name}' was not installed: {error}")
             continue
+        wanted = formats.skill_platforms(text)
+        if platform in formats.PLATFORMS and wanted and platform not in wanted:
+            continue  # its rules are for the other platform, so the skill is too
         files = {
             f"{SKILLS_FOLDER}/{skill.name}/{path.relative_to(skill).as_posix()}": path.read_bytes()
             for path in sorted(skill.rglob("*"))
@@ -191,7 +196,8 @@ def desired_units(repo: Path, address: TeamRepoAddress) -> tuple[list[_Unit], li
     problems: list[str] = []
     copy = teamcopy.copy_path(repo)
     state = teamcopy.read_state(repo)
-    ruleset = rules.load(repo, repo_platform(repo, address))
+    platform = repo_platform(repo, address)
+    ruleset = rules.load(repo, platform)
     problems.extend(ruleset.problems)
     policy = aiuse.load(repo)
     if policy.problem:
@@ -217,7 +223,7 @@ def desired_units(repo: Path, address: TeamRepoAddress) -> tuple[list[_Unit], li
     )
     text = pointer_text(address, "\n".join(sections))
     units = [_Unit("the instruction file", f"/{RULES_FILE}", {RULES_FILE: text.encode("utf-8")})]
-    team_skills = _skill_units(copy, problems)
+    team_skills = _skill_units(copy, problems, platform)
     units += team_skills
     units += _own_skill_units({unit.exclude.strip("/").rsplit("/", 1)[-1] for unit in team_skills})
     units += _agent_units(copy, problems)

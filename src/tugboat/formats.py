@@ -54,6 +54,8 @@ AI_USE_HEADINGS = ("Data that must never enter a prompt", "Accounts", "Accountab
 AI_USE_MAX = 8000  # one page
 
 _RULE_ID = re.compile(r"^(COM|IOS|AND)-[0-9]{3}$")
+_RULE_ID_IN_TEXT = re.compile(r"(?<![A-Za-z0-9-])(?:COM|IOS|AND)-[0-9]{3}(?![A-Za-z0-9])")
+_SCOPE_OF_PREFIX = {prefix: scope for scope, prefix in RULE_SCOPES.items()}
 _DECISION_ID = re.compile(r"^DEC-[0-9]{4}$")
 _TOOL_NAME = re.compile(r"^[A-Za-z][A-Za-z0-9_.:*()-]{0,99}$")
 _BRANCH = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,99}$")
@@ -80,6 +82,27 @@ def _body(body: str, label: str, maximum: int = 20_000) -> str:
     if len(text) > maximum:
         raise DataError(f"{label} text cannot exceed {maximum} characters")
     return text
+
+
+def rule_ids_named(text: str) -> list[str]:
+    """Every rule ID a text names, such as IOS-005, each once, in the order they appear."""
+    return list(dict.fromkeys(match.group(0) for match in _RULE_ID_IN_TEXT.finditer(text)))
+
+
+def rule_scope(rule_id: str) -> str:
+    """The scope a rule ID belongs to: IOS-005 is an ios rule."""
+    return _SCOPE_OF_PREFIX[rule_id[:3]]
+
+
+def skill_platforms(text: str) -> frozenset[str]:
+    """The platforms a skill is for, read from the rules it names.
+
+    A skill that names iOS rules and no Android rule is an iOS skill, and
+    the other way round. A skill that names rules of both platforms, only
+    company rules, or no rule is for every app repo: the empty set.
+    """
+    scopes = {rule_scope(rule_id) for rule_id in rule_ids_named(text)} & PLATFORMS
+    return frozenset(scopes) if len(scopes) == 1 else frozenset()
 
 
 def validate_rule_id(value: object, label: str) -> str:
