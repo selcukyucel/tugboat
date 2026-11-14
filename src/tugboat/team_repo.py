@@ -190,6 +190,11 @@ def check_team_repo(root: str | os.PathLike[str]) -> Report:
         for rule_id in agent["rules"]:
             if rule_id not in rule_ids:
                 check.error(path, f"names rule {rule_id}, which is not in policies/")
+            elif rule_statuses[rule_id] != "adopted":
+                check.warning(path, f"names rule {rule_id}, which is an example. An example rule is not applied.")
+        for platform in formats.platforms_of_rules(agent["rules"]):
+            if profile and not any(repo["platform"] == platform for repo in profile["app_repos"]):
+                check.warning(path, f"names only {platform} rules, and the project profile has no {platform} repo. No agent tool will get the definition.")
 
     skills = root_path / "skills"
     if skills.is_dir():
@@ -211,9 +216,9 @@ def check_team_repo(root: str | os.PathLike[str]) -> Report:
                     check.error(path, f"names rule {rule_id}, which is not in policies/")
                 elif rule_statuses[rule_id] != "adopted":
                     check.warning(path, f"names rule {rule_id}, which is an example. An example rule is not applied.")
-            scopes = {formats.rule_scope(rule_id) for rule_id in named} & formats.PLATFORMS
-            if len(scopes) == 1 and profile and not any(repo["platform"] in scopes for repo in profile["app_repos"]):
-                check.warning(path, f"names only {next(iter(scopes))} rules, and the project profile has no {next(iter(scopes))} repo. No agent will get the skill.")
+            for platform in formats.platforms_of_rules(named):
+                if profile and not any(repo["platform"] == platform for repo in profile["app_repos"]):
+                    check.warning(path, f"names only {platform} rules, and the project profile has no {platform} repo. No agent will get the skill.")
 
     order = {"error": 0, "warning": 1}
     return Report(check.files_checked, sorted(check.problems, key=lambda problem: (order[problem.level], problem.path)))

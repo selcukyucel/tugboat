@@ -22,7 +22,7 @@ Tugboat uses only the Python standard library. It has no third-party package at 
 ## Install
 
 ```sh
-uv tool install git+https://github.com/selcukyucel/tugboat@v0.19.0
+uv tool install git+https://github.com/selcukyucel/tugboat@v0.20.0
 tug version
 ```
 
@@ -333,6 +333,37 @@ When a skill changes sides, the next sync removes it from the repos it no longer
 
 - A skill that names a rule that is not in `policies/` fails the check. This catches a typo.
 - It warns when a skill names no rule ID, when it names a rule that is only an example, and when it is for a platform the project has no repo for.
+
+## Agent registry
+
+The team repo holds the agent definitions the project has approved, one file each under `agents/`. A definition states the agent's purpose, the tools it may use, and the rule IDs it applies.
+
+```
+---
+name: reviewer
+description: Reviews a finished change and reports findings. It edits no file.
+tools: ["Read", "Grep", "Glob"]
+rules: []
+---
+
+The instructions the agent follows.
+```
+
+- **Installed by init and sync.** Each definition is written to `.claude/agents/<name>.md` in the app repo, which Claude Code, Copilot CLI, and Copilot in VS Code all read. Git does not see the file. The installed file has the three header fields every agent tool knows: `name`, `description`, and `tools`.
+- **Listed for the agent.** The instruction file gets a section "Approved agents", with the name, purpose, and tools of each.
+- **Changed only by pull request.** A definition lives in the team repo. The installed copy is read-only and is rewritten at the next sync after a merge. A definition that is removed from the team repo is removed from the app repo.
+- **Installed where its rules apply**, as a skill is. A definition that names iOS rules and no Android rule goes to iOS repos only. With `rules: []`, or rules of both platforms, it goes to every app repo.
+- **Never over a file of yours.** If the app repo already has a file at that path that Tugboat did not write, it is left alone and the sync report says so.
+- `tug team check` fails a definition that names a rule that is not in `policies/`. It warns when one names a rule that is only an example, or is for a platform the project has no repo for.
+
+**The reviewer.** The starter layout ships one definition, `reviewer`. It reviews a finished change against the adopted rules, the decision records, and the knowledge notes, and reports findings.
+
+- It may use `Read`, `Grep`, and `Glob`. It has no edit tool, no write tool, and no shell, so it can change no file.
+- It cannot fetch a diff itself. The agent that calls it hands it the list of changed files and the diff.
+- A review without that is reported as incomplete, never as clean.
+- Its `rules` list is empty on purpose: it applies every adopted rule of the repo it runs in.
+
+Whether an agent tool enforces the `tools` list is up to that tool. The automatic run of the reviewer after each change is not built yet. Today a developer or the main agent calls it.
 
 ## Proposing a change to the team repo
 

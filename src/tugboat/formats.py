@@ -101,7 +101,12 @@ def skill_platforms(text: str) -> frozenset[str]:
     the other way round. A skill that names rules of both platforms, only
     company rules, or no rule is for every app repo: the empty set.
     """
-    scopes = {rule_scope(rule_id) for rule_id in rule_ids_named(text)} & PLATFORMS
+    return platforms_of_rules(rule_ids_named(text))
+
+
+def platforms_of_rules(rule_ids: list[str]) -> frozenset[str]:
+    """The one platform a list of rule IDs is for, or the empty set when it is not one platform only."""
+    scopes = {rule_scope(rule_id) for rule_id in rule_ids} & PLATFORMS
     return frozenset(scopes) if len(scopes) == 1 else frozenset()
 
 

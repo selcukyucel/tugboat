@@ -20,7 +20,7 @@ from importlib.resources.abc import Traversable
 from pathlib import Path
 from typing import NamedTuple
 
-from tugboat import aitools, aiuse, apprepo, decisions, detect, estate, formats, frontmatter, knowledge, profile, rules, settingsmerge, teamcopy
+from tugboat import agentdefs, aitools, aiuse, apprepo, decisions, detect, estate, formats, frontmatter, knowledge, profile, rules, settingsmerge, teamcopy
 from tugboat.address import TeamRepoAddress
 from tugboat.errors import DataError, TugError
 from tugboat.gitrun import GitError, git
@@ -32,7 +32,7 @@ MANIFEST_SCHEMA = "tug.host-files/1"
 MANIFEST_FILE = "host-files.json"
 RULES_FILE = ".claude/rules/tugboat.md"
 SKILLS_FOLDER = ".claude/skills"
-AGENTS_FOLDER = ".claude/agents"
+AGENTS_FOLDER = agentdefs.INSTALLED
 COPY = f"{apprepo.LOCAL_FOLDER}/{teamcopy.COPY_FOLDER}"
 # The skill for the one setup step that needs the tracker. It ships with the tool.
 CRITERIA_SKILL = "tug-criteria-source"
@@ -109,6 +109,7 @@ The report lists what changed in the team repo since the last sync, with the pat
 - Owners of apps and modules: the section "Who owns what" below, and the command `tug owner <path>`.
 - Protected paths: `{COPY}/permissions/protected-paths.json`. Ask the developer before any edit to a file that matches.
 - Approved AI tools, models, and MCP servers: the section "Approved AI tools" below.
+- Agents the team approved: the section "Approved agents" below.
 
 ## Limits
 
@@ -169,26 +170,8 @@ def _own_skill_units(taken: set[str]) -> list[_Unit]:
     return units
 
 
-def _agent_units(copy: Path, problems: list[str]) -> list[_Unit]:
-    units = []
-    folder = copy / "agents"
-    for path in sorted(folder.glob("*.md")) if folder.is_dir() else ():
-        if path.name in {"README.md"}:
-            continue
-        try:
-            agent = formats.validate_agent(*frontmatter.parse(path.read_text(encoding="utf-8")))
-            if path.name != f"{agent['name']}.md":
-                raise DataError("its name does not match its file name")
-        except (OSError, UnicodeDecodeError, DataError) as error:
-            problems.append(f"agent '{path.stem}' was not installed: {error}")
-            continue
-        body = agent["text"]
-        if agent["rules"]:
-            body += f"\n\nRules this agent applies: {', '.join(agent['rules'])}. Read each one from `{COPY}/policies/`.\n"
-        header = {"name": agent["name"], "description": agent["description"], "tools": ", ".join(agent["tools"])}
-        target = f"{AGENTS_FOLDER}/{agent['name']}.md"
-        units.append(_Unit(f"agent '{agent['name']}'", f"/{target}", {target: frontmatter.render(header, body).encode("utf-8")}))
-    return units
+def _agent_units(registry: agentdefs.Registry) -> list[_Unit]:
+    return [_Unit(f"agent '{agent.name}'", f"/{agent.target}", {agent.target: agent.installed_text().encode("utf-8")}) for agent in registry.agents]
 
 
 def desired_units(repo: Path, address: TeamRepoAddress) -> tuple[list[_Unit], list[str]]:
@@ -212,6 +195,7 @@ def desired_units(repo: Path, address: TeamRepoAddress) -> tuple[list[_Unit], li
     problems.extend(notes.problems)
     records = decisions.load(repo)
     problems.extend(records.problems)
+    registry = agentdefs.load(repo, platform)
     remote = detect.remote_address(repo)
     sections = (
         rules.render(ruleset, state["revision"] if state else None),
@@ -220,13 +204,15 @@ def desired_units(repo: Path, address: TeamRepoAddress) -> tuple[list[_Unit], li
         estate.render(estate_map, remote.slug if remote else None),
         knowledge.render(notes, remote.slug if remote else None),
         decisions.render(records, remote.slug if remote else None),
+        agentdefs.render(registry),
     )
     text = pointer_text(address, "\n".join(sections))
     units = [_Unit("the instruction file", f"/{RULES_FILE}", {RULES_FILE: text.encode("utf-8")})]
     team_skills = _skill_units(copy, problems, platform)
     units += team_skills
     units += _own_skill_units({unit.exclude.strip("/").rsplit("/", 1)[-1] for unit in team_skills})
-    units += _agent_units(copy, problems)
+    units += _agent_units(registry)
+    problems.extend(registry.problems)
     return units, problems
 
 
