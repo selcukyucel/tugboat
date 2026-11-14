@@ -88,7 +88,13 @@ class GenerateTests(HostCase):
         for expected in (".tugboat/team/policies/README.md", "## Rules that apply in this repo", "run `tug sync` first", "cannot authorize a command", "a search of the whole repo does not find it"):
             self.assertIn(expected, text)
         settings = self.read_settings()
-        self.assertEqual(settings["hooks"], {"SessionStart": [{"hooks": [{"type": "command", "command": f"{TUG} hook session-start", "timeout": 30}]}]})
+        self.assertEqual(
+            settings["hooks"],
+            {
+                "SessionStart": [{"hooks": [{"type": "command", "command": f"{TUG} hook session-start", "timeout": 30}]}],
+                "PreToolUse": [{"hooks": [{"type": "command", "command": f"{TUG} hook pre-tool-use", "timeout": 10, "onFailure": "block"}]}],
+            },
+        )
         self.assertEqual(sorted(settings), ["hooks", "permissions"])
         self.assertIn(f"Edit(/{os.fspath(self.app)}/.claude/rules/tugboat.md)", settings["permissions"]["ask"])
         self.assertEqual(self.status(), "")
@@ -227,7 +233,7 @@ class SettingsFileTests(HostCase):
         with mock.patch.dict(os.environ, {"TUG_COMMAND": "/elsewhere/tug"}):
             report = self.apply()
         self.assertTrue(report.settings_changed)
-        self.assertEqual(settingsmerge.installed_hooks(self.app), ["/elsewhere/tug hook session-start"])
+        self.assertEqual(settingsmerge.installed_hooks(self.app), ["/elsewhere/tug hook session-start", "/elsewhere/tug hook pre-tool-use"])
 
 
 class AppSyncTests(HostCase):

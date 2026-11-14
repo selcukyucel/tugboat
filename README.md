@@ -8,7 +8,7 @@ It runs beside Claude Code, GitHub Copilot CLI, and GitHub Copilot in VS Code. I
 
 ## Status
 
-Early. This version can start and check a team repo, set up an app repo with `tug init`, save the project's choices in the team repo, keep a read-only copy of the team content inside the app repo, and generate the files the agent tools load. It syncs at the start of each agent session. It does not yet check or block anything the agent does.
+Early. This version can start and check a team repo, set up an app repo with `tug init`, save the project's choices in the team repo, keep a read-only copy of the team content inside the app repo, and generate the files the agent tools load. It syncs at the start of each agent session. It checks each write and each shell command before the agent makes it.
 A command that is not written yet is listed and answers "not built yet". Nothing here is ready for daily use.
 
 ## Requirements
@@ -22,7 +22,7 @@ Tugboat uses only the Python standard library. It has no third-party package at 
 ## Install
 
 ```sh
-uv tool install git+https://github.com/selcukyucel/tugboat@v0.21.0
+uv tool install git+https://github.com/selcukyucel/tugboat@v0.22.0
 tug version
 ```
 
@@ -75,6 +75,7 @@ One machine can serve several projects. Each project's minimum is checked in tha
 | `tug expire` | Removes records older than six months, after confirmation | Not built yet |
 | `tug remove` | Takes Tugboat out of a repo, or out of every repo on the machine | Not built yet |
 | `tug hook session-start` | Called by the agent tool at the start of a session. Syncs and reports to the agent. | Works |
+| `tug hook pre-tool-use` | Called by the agent tool before each tool call. Allows, asks, or denies. | Works |
 
 Exit codes: `0` success, `1` error, `2` usage error (agent tools read `2` from a hook as "deny"), `3` command not built yet.
 
@@ -394,10 +395,50 @@ tug protected Signing/dist.p12 Sources/App.swift
 
 | Agent tool | Protection |
 |---|---|
-| Claude Code | The "ask" rule. Claude Code's documentation says such a rule holds in every permission mode. In a run with nobody to answer, the edit is refused. |
-| Copilot CLI and Copilot in VS Code | The instruction only. Copilot takes no allow or deny rule for tools from a file in the repo. The hook that checks an action before the agent takes it is not built yet. It will read the same compiled file. |
+| Claude Code | The "ask" rule, and the check before each action. Claude Code's documentation says such a rule holds in every permission mode. In a run with nobody to answer, the edit is refused. |
+| Copilot CLI and Copilot in VS Code | The check before each action, which denies the change. Copilot takes no allow or deny rule for tools from a file in the repo. |
 
-The rule covers the tools that edit files. A shell command that writes a file by another route, such as a script, is not covered by it. That is also the hook's job.
+See "The check before each action" below.
+
+## The check before each action
+
+Before an agent tool runs a tool call, it calls `tug hook pre-tool-use` and waits for the answer: allow, ask the developer, or deny. Sync installs this hook once, in `.claude/settings.local.json`, where Claude Code, Copilot CLI, and Copilot in VS Code all read it.
+
+Only tools that write files or run shell commands are checked. A read passes at once. One check takes about 50 milliseconds.
+
+| What the agent is about to do | Claude Code | Copilot |
+|---|---|---|
+| Write text that holds a secret pattern, or run a shell command that holds one | Denied | Denied |
+| Change a protected path with an edit tool | Asks the developer | Denied |
+| Change a protected path with a shell command that the check recognises | Asks the developer | Denied |
+| Force-push to a shared branch, delete one, or move one by force | Denied | Denied |
+| Run `git reset --hard` while on a shared branch | Denied | Denied |
+| Anything else | Allowed | Allowed |
+
+- **A secret** is found with the same patterns the team repo check uses for notes. Only the text that is about to be written is read, not the file as it is. The answer names the kind of secret and the line, never the secret.
+- **A protected path** comes from the compiled list, `.tugboat/permissions.json`. So a path added in the team repo is checked after the next sync.
+- **A shared branch** is the repo's default branch from the project profile, `main`, `master`, `develop`, and any `release/...` branch. A force push to a developer's own branch is allowed.
+- **Shell commands that are recognised as writes**: a redirect (`>`, `>>`), `tee`, `rm`, `rmdir`, `mv`, `cp` and `ln` (the destination), `touch`, `mkdir`, `chmod`, `chown`, `truncate`, `dd of=`, `sed -i`, `perl -i`, and `git rm`, `git mv`, `git clean`, `git restore`, `git checkout`, `git apply` with paths. Reading a protected file, or running a tool such as `fastlane`, is not a change.
+- **Every answer says why**, and what the developer can do.
+
+**When the check itself fails, the action is denied.** A check that failed has not passed.
+
+| What goes wrong | Claude Code | Copilot CLI |
+|---|---|---|
+| `tug` meets an error, such as a broken compiled list | Denied, with the reason | Denied, with the reason |
+| The `tug` command is missing | Denied. The hook entry says `"onFailure": "block"`, which Claude Code needs for this. | Denied |
+| The check runs past its time limit of 10 seconds | Denied, for the same reason | **Allowed.** Copilot lets the action through after a timeout, and no setting changes that. |
+
+With a broken compiled list every write and every shell command is denied, apart from `tug sync`, which rebuilds the list.
+
+**Limits.** These checks are a guard against mistakes. They are not a security boundary.
+
+- A script or a program that writes a file by a route the check does not recognise is not seen.
+- Copilot CLI loads no hook from a folder it does not trust, and VS Code runs none in a workspace it does not trust. Nothing reports that.
+- A Copilot hook that passes its time limit lets the action through.
+- Hooks in VS Code are a preview feature there.
+- Claude Code older than 2.1.295 does not know `"onFailure"`, so a missing or crashed `tug` would let the action through.
+- A secret pattern can also match a made-up value in a test. The agent is then told to leave that change to the developer.
 
 ## Proposing a change to the team repo
 

@@ -38,7 +38,11 @@ COPY = f"{apprepo.LOCAL_FOLDER}/{teamcopy.COPY_FOLDER}"
 CRITERIA_SKILL = "tug-criteria-source"
 
 # The hooks Tugboat installs. More arrive with the tasks that build them.
-HOOKS: list[HookSpec] = [HookSpec("SessionStart", "session-start", 30)]
+HOOKS: list[HookSpec] = [
+    HookSpec("SessionStart", "session-start", 30),
+    # No matcher: every tool call is seen, so a tool with an unknown name is still classified by the hook itself.
+    HookSpec("PreToolUse", "pre-tool-use", 10, blocks_on_failure=True),
+]
 
 
 class HostReport(NamedTuple):
@@ -75,8 +79,8 @@ def resolve_tug_command() -> str:
     return "tug"
 
 
-def repo_platform(repo: Path, address: TeamRepoAddress) -> str | None:
-    """The platform the project profile gives this app repo. None when the repo is not in the profile."""
+def repo_entry(repo: Path, address: TeamRepoAddress) -> dict | None:
+    """What the project profile says about this app repo. None when the repo is not in the profile."""
     remote = detect.remote_address(repo)
     if remote is None:
         return None
@@ -84,7 +88,12 @@ def repo_platform(repo: Path, address: TeamRepoAddress) -> str | None:
         working = profile.load(address)
     except TugError:
         return None
-    entry = profile.find_repo(working.profile, remote.slug) if working.profile else None
+    return profile.find_repo(working.profile, remote.slug) if working.profile else None
+
+
+def repo_platform(repo: Path, address: TeamRepoAddress) -> str | None:
+    """The platform the project profile gives this app repo. None when the repo is not in the profile."""
+    entry = repo_entry(repo, address)
     return entry["platform"] if entry else None
 
 
@@ -181,12 +190,13 @@ def desired_units(repo: Path, address: TeamRepoAddress) -> tuple[list[_Unit], li
     return units, problems
 
 
-def _plan(repo: Path, address: TeamRepoAddress) -> tuple[list[_Unit], list[str], str | None]:
-    """The wanted units, what could not be loaded, and the repo's platform."""
+def _plan(repo: Path, address: TeamRepoAddress) -> tuple[list[_Unit], list[str], dict | None]:
+    """The wanted units, what could not be loaded, and the repo's entry in the project profile."""
     problems: list[str] = []
     copy = teamcopy.copy_path(repo)
     state = teamcopy.read_state(repo)
-    platform = repo_platform(repo, address)
+    entry = repo_entry(repo, address)
+    platform = entry["platform"] if entry else None
     ruleset = rules.load(repo, platform)
     problems.extend(ruleset.problems)
     policy = aiuse.load(repo)
@@ -225,7 +235,7 @@ def _plan(repo: Path, address: TeamRepoAddress) -> tuple[list[_Unit], list[str],
     units += _own_skill_units({unit.exclude.strip("/").rsplit("/", 1)[-1] for unit in team_skills})
     units += _agent_units(registry)
     problems.extend(registry.problems)
-    return units, problems, platform
+    return units, problems, entry
 
 
 def read_manifest(repo: Path) -> dict[str, str]:
@@ -265,7 +275,8 @@ def _prune_empty(folder: Path, stop: Path) -> None:
 
 def apply(repo: Path, address: TeamRepoAddress, *, tug_command: str | None = None) -> HostReport:
     """Bring the generated files in line with the copy. A second run with nothing new writes nothing."""
-    units, problems, platform = _plan(repo, address)
+    units, problems, entry = _plan(repo, address)
+    platform = entry["platform"] if entry else None
     before = read_manifest(repo)
     candidates = [path for unit in units for path in unit.files]
     tracked = _tracked(repo, candidates)
@@ -301,7 +312,7 @@ def apply(repo: Path, address: TeamRepoAddress, *, tug_command: str | None = Non
 
     # What is protected in this repo: the team repo's list, and every file Tugboat generates here.
     generated = [pattern.strip("/") for pattern in excludes[1:]]
-    compiled = permissions.compile_for(repo, platform, generated, settingsmerge.SETTINGS_FILE)
+    compiled = permissions.compile_for(repo, platform, generated, settingsmerge.SETTINGS_FILE, entry["default_branch"] if entry else None)
     ask_rules = permissions.claude_ask_rules(repo, compiled)
     if ask_rules is None:
         problems.append(f"no rule for Claude Code was written to {settingsmerge.SETTINGS_FILE}: the path of this repo has a bracket in it, which a rule cannot hold")

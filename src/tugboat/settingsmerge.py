@@ -34,6 +34,7 @@ class HookSpec(NamedTuple):
     event: str  # the agent tool's event name, such as "SessionStart"
     arguments: str  # what follows `tug hook`, such as "session-start"
     timeout: int  # seconds
+    blocks_on_failure: bool = False  # a crash, a missing command, or a timeout of this hook denies the action
 
 
 class MergeResult(NamedTuple):
@@ -139,7 +140,10 @@ def merged_settings(settings: dict[str, Any], specs: list[HookSpec], tug_command
         raise DataError('its "hooks" value is not an object')
     hooks = _without_tugboat(hooks)
     for spec in specs:
-        entry = {"type": "command", "command": hook_command(tug_command, spec), "timeout": spec.timeout}
+        entry: dict[str, Any] = {"type": "command", "command": hook_command(tug_command, spec), "timeout": spec.timeout}
+        if spec.blocks_on_failure:
+            # Claude Code lets the action through when a hook fails, unless the hook says this. Copilot blocks anyway.
+            entry["onFailure"] = "block"
         hooks.setdefault(spec.event, [])
         if not isinstance(hooks[spec.event], list):
             raise DataError(f'its "hooks" value for {spec.event} is not a list')

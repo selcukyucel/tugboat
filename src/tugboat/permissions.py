@@ -56,6 +56,7 @@ class Compiled(NamedTuple):
     platform: str | None
     protected: tuple[Protected, ...]
     problem: str | None = None  # why the team repo's list could not be read
+    shared_branches: tuple[str, ...] = ()  # the repo's default branch, for the git checks of the hook
 
 
 def _team_entries(repo: Path, platform: str | None) -> list[Protected]:
@@ -88,12 +89,14 @@ def read_compiled(repo: Path) -> Compiled | None:
                 return None
             protected.append(Protected(pattern, reason, source))
         platform = data.get("platform")
-        return Compiled(platform if platform in formats.PLATFORMS else None, tuple(protected))
+        branches = data.get("shared_branches")
+        shared = tuple(branch for branch in branches if isinstance(branch, str)) if isinstance(branches, list) else ()
+        return Compiled(platform if platform in formats.PLATFORMS else None, tuple(protected), None, shared)
     except (DataError, KeyError, TypeError):
         return None
 
 
-def compile_for(repo: Path, platform: str | None, generated: list[str], settings_file: str) -> Compiled:
+def compile_for(repo: Path, platform: str | None, generated: list[str], settings_file: str, default_branch: str | None = None) -> Compiled:
     """Work out what is protected in this repo. `generated` are the patterns of the files Tugboat generates.
 
     When the team repo's list cannot be read, the entries of the last good
@@ -117,7 +120,7 @@ def compile_for(repo: Path, platform: str | None, generated: list[str], settings
         if entry.pattern not in seen:
             seen.add(entry.pattern)
             protected.append(entry)
-    return Compiled(platform, tuple(protected), problem)
+    return Compiled(platform, tuple(protected), problem, (default_branch,) if default_branch else ())
 
 
 def write_compiled(repo: Path, compiled: Compiled) -> bool:
@@ -125,6 +128,7 @@ def write_compiled(repo: Path, compiled: Compiled) -> bool:
     document: dict[str, Any] = {
         "schema": COMPILED_SCHEMA,
         "platform": compiled.platform,
+        "shared_branches": list(compiled.shared_branches),
         "protected": [{"pattern": entry.pattern, "reason": entry.reason, "source": entry.source} for entry in compiled.protected],
     }
     text = pretty_json(document)
