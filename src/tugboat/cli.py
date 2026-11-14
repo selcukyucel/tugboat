@@ -219,6 +219,37 @@ def _update(args: argparse.Namespace) -> int:
     return update.run(check_only=args.check)
 
 
+def _configure_owner(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("paths", nargs="+", metavar="PATH", help="a file or a folder in this app repo. It need not exist yet.")
+
+
+def _owner(args: argparse.Namespace) -> int:
+    from tugboat import apprepo, detect, estate, teamcopy
+
+    repo = apprepo.find_app_repo(".")
+    if teamcopy.read_state(repo) is None:
+        raise TugError("this folder is not set up with Tugboat. Run `tug init` inside the app repo first.")
+    loaded = estate.load(repo)
+    if loaded.apps is None:
+        raise TugError(loaded.problem or "the team repo has no estate map, so no owner can be named.")
+    remote = detect.remote_address(repo)
+    apps = estate.apps_of(loaded.apps, remote.slug if remote else None)
+    if not apps:
+        name = remote.slug if remote else "this repo"
+        raise TugError(f"{name} is not in the estate map ({estate.COPY_PATH}), so no owner can be named. A pull request in the team repo adds it.")
+    failed = False
+    for given in args.paths:
+        try:
+            path = estate.repo_path(repo, given)
+        except TugError as error:
+            print(f"{given}: {error}")
+            failed = True
+            continue
+        for found in estate.owners_of(apps, path):
+            print(f"{path}: {estate.owner_words(found)}")
+    return EXIT_ERROR if failed else EXIT_OK
+
+
 def _team_repo_of(option: str | None):  # noqa: ANN202 - the address type is imported late
     """The team repo a command works on: the one given, or the one this app repo is set up for."""
     from tugboat import apprepo, teamcopy
@@ -359,6 +390,7 @@ COMMANDS: tuple[Command, ...] = (
     Command("init", "Set up the app repo it is run in", _init, _configure_init),
     Command("sync", "Bring the team repo clone, this repo's copy, and the agent tool files up to date", _sync, _configure_sync),
     Command("profile", "Show the project profile, or save where acceptance criteria are kept: `tug profile show`, `set-criteria`", _profile, _configure_profile),
+    Command("owner", "Name the owner of a file or folder in this app repo, from the estate map", _owner, _configure_owner),
     Command("status", "Print the session brief"),
     Command("doctor", "Check that this machine and repo are ready"),
     Command("update", "Update tug to the newest release", _update, _configure_update),

@@ -95,7 +95,10 @@ class StarterTests(TeamRepoCase):
         formats.validate_note(*frontmatter.parse(blocks("knowledge/README.md")[0]))
         formats.validate_decision(*frontmatter.parse(blocks("decisions/README.md")[0]))
         formats.validate_agent(*frontmatter.parse(blocks("agents/README.md")[0]))
-        formats.validate_estate(parse_json(blocks("estate/README.md")[0]))
+        # The format example is the JSON block. Other blocks show commands.
+        formats.validate_estate(parse_json(blocks("estate/README.md")[-1]))
+        formats.validate_ai_tools(parse_json(blocks("permissions/README.md")[-1]))
+        formats.validate_ai_use(*frontmatter.parse(blocks("policies/README.md")[-1].replace("...", "Text.")))
 
     def test_new_writes_into_a_fresh_clone_and_refuses_a_folder_with_files(self):
         with tempfile.TemporaryDirectory() as holder:

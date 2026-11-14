@@ -159,7 +159,8 @@ def validate_glob(value: object, label: str) -> str:
     """A path pattern inside a repo.
 
     `*` matches within one path part, `?` matches one character, and `**` as a
-    whole part matches any number of parts. Nothing else is special.
+    whole part matches any number of parts. Nothing else is special. A pattern
+    covers what it matches and everything beneath it. `globmatch` does the matching.
     """
     text = require_text(value, label, 300)
     if "\\" in text:

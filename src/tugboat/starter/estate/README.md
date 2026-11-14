@@ -1,7 +1,14 @@
 # Estate map
 
-`estate.json` lists the project's apps, their modules, who owns each, and the environments they run in.
-Given a file path in an app repo, the agent uses this file to name the owner.
+`estate.json` is the project's inventory. It lists the apps, the repo each one lives in, the modules of each app, who owns each, and the environments an app runs in.
+
+It answers one question, for people, for the agent, and for reports: who owns this file? In an app repo:
+
+```sh
+tug owner Sources/Checkout/Cart.swift
+```
+
+The starter file lists no app. Add yours with a pull request.
 
 Each app has:
 
@@ -14,7 +21,15 @@ Each app has:
 | `environments` | Such as `dev`, `staging`, `production` |
 | `modules` | Parts of the app. Each has an `id`, an `owner`, and the `paths` it covers. |
 
-A path that matches no module belongs to the app's owner.
+How an owner is found:
+
+- A module names the paths it covers. When several modules cover a path, the narrowest path wins: `Sources/Checkout/Payments/**` beats `Sources/Checkout/**`.
+- A path that no module covers belongs to the app's owner.
+- An owner is a person or a group, written the way the team writes it, such as a GitHub handle.
+
+In a path, `*` matches inside one folder or file name, `?` matches one character, and `**` matches any number of folders. A path covers what it matches and everything beneath it.
+
+`repo` must be an app repo of the project profile. `tug team check` warns when it is not, because a wrong name means no owner is found in that repo.
 
 The backend is not described here.
 

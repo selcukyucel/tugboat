@@ -117,13 +117,23 @@ def check_team_repo(root: str | os.PathLike[str]) -> Report:
             check.problems[-1:] = [Problem(MARKER, "is missing. This folder is not a Tugboat team repo.", "error")]
         return Report(check.files_checked, check.problems)
 
+    profile = None
     if not (root_path / PROFILE).exists():
         check.warning(PROFILE, "is not there yet. `tug init` creates it.")
     else:
-        check.json_file(PROFILE, formats.validate_profile)
+        profile = check.json_file(PROFILE, formats.validate_profile)
     check.json_file("permissions/protected-paths.json", formats.validate_protected_paths)
     check.json_file("permissions/ai-tools.json", formats.validate_ai_tools)
-    check.json_file("estate/estate.json", formats.validate_estate)
+    estate = check.json_file("estate/estate.json", formats.validate_estate)
+    if estate and profile:
+        # A repo name that is typed wrong here makes every owner lookup in that repo come back empty.
+        registered = {repo["github"].lower(): repo["platform"] for repo in profile["app_repos"]}
+        for app in estate["apps"]:
+            platform = registered.get(app["repo"].lower())
+            if platform is None:
+                check.warning("estate/estate.json", f"app '{app['id']}' names the repo {app['repo']}, which is not in the project profile")
+            elif platform != app["platform"]:
+                check.warning("estate/estate.json", f"app '{app['id']}' has platform {app['platform']}, and the project profile says {app['repo']} is {platform}")
 
     policies = root_path / "policies"
     ai_use = policies / "ai-use.md"

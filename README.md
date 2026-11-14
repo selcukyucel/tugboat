@@ -22,7 +22,7 @@ Tugboat uses only the Python standard library. It has no third-party package at 
 ## Install
 
 ```sh
-uv tool install git+https://github.com/selcukyucel/tugboat@v0.14.0
+uv tool install git+https://github.com/selcukyucel/tugboat@v0.15.0
 tug version
 ```
 
@@ -64,6 +64,7 @@ One machine can serve several projects. Each project's minimum is checked in tha
 | `tug profile show` | Prints the project profile this machine works from | Works |
 | `tug profile set-criteria` | Saves where the project's stories keep their acceptance criteria. Run by the agent in the first session. | Works. Not yet tried with a real tracker. |
 | `tug sync` | Brings the team repo clone, an app repo's copy of it, and the agent tool files up to date | Works |
+| `tug owner <path>` | Names the owner of a file or folder in an app repo, from the estate map | Works |
 | `tug status` | Prints the session brief | Not built yet |
 | `tug doctor` | Checks that this machine and repo are ready | Not built yet |
 | `tug update` | Updates `tug` to the newest release | Works |
@@ -161,6 +162,33 @@ An MCP server entry says how the server is recognised on a machine:
 The name a developer gives a server in their own settings is not used. Anyone can call any server "github".
 
 The setup check that compares the servers configured on a machine with this list is not built yet. The register and the way a server is matched are ready for it.
+
+## Estate map
+
+The estate map is one file in the team repo, `estate/estate.json`. It is the project's inventory: which apps there are, which repo each lives in, which modules each app has, who owns each, and which environments an app runs in. It answers one question: who owns this file?
+
+```sh
+tug owner Sources/Checkout/Payments/Card.swift
+# Sources/Checkout/Payments/Card.swift: @sam (module payments of the app shop-ios, which covers Sources/Checkout/Payments/**)
+```
+
+- A module names the paths it covers. When several modules cover a path, the narrowest path wins: `Sources/Checkout/Payments/**` beats `Sources/Checkout/**`, which beats `**/*.swift`.
+- A path that no module covers belongs to the owner of the app.
+- A path may be given from the folder you are in, or as a full path. The file need not exist yet. A path outside the repo is refused.
+- A repo that is not in the map gets no answer, and the command exits with `1`. Tugboat does not guess an owner.
+- The agent gets the apps and modules of its own repo in the instruction file, and is told to run `tug owner` and not to guess.
+- `tug team check` refuses a map that is not valid. It warns when an app names a repo that is not in the project profile, or a platform that differs from the profile.
+- The backend is not in the map.
+
+**Path patterns.** The same small pattern language is used wherever the team repo names paths:
+
+| Sign | Matches |
+|---|---|
+| `*` | Any run of characters inside one folder or file name |
+| `?` | One character inside one name |
+| `**` | Any number of folders, also none. It must stand alone between slashes. |
+
+Everything else matches itself, and letter case counts. A pattern covers what it matches and everything beneath it, so `Sources/Auth` and `Sources/Auth/**` cover the same files.
 
 ## Proposing a change to the team repo
 

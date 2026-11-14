@@ -20,7 +20,7 @@ from importlib.resources.abc import Traversable
 from pathlib import Path
 from typing import NamedTuple
 
-from tugboat import aitools, aiuse, apprepo, detect, formats, frontmatter, profile, rules, settingsmerge, teamcopy
+from tugboat import aitools, aiuse, apprepo, detect, estate, formats, frontmatter, profile, rules, settingsmerge, teamcopy
 from tugboat.address import TeamRepoAddress
 from tugboat.errors import DataError, TugError
 from tugboat.gitrun import GitError, git
@@ -106,7 +106,7 @@ The report lists what changed in the team repo since the last sync, with the pat
 - The team's AI use policy: the section "AI use policy" below.
 - Knowledge notes: `{COPY}/knowledge/`. Each note lists the code paths it covers in its header. Read the notes whose paths match the files of the current task.
 - Decision records: `{COPY}/decisions/`.
-- Owners of apps and modules: `{COPY}/estate/estate.json`.
+- Owners of apps and modules: the section "Who owns what" below, and the command `tug owner <path>`.
 - Protected paths: `{COPY}/permissions/protected-paths.json`. Ask the developer before any edit to a file that matches.
 - Approved AI tools, models, and MCP servers: the section "Approved AI tools" below.
 
@@ -198,7 +198,16 @@ def desired_units(repo: Path, address: TeamRepoAddress) -> tuple[list[_Unit], li
     register = aitools.load(repo)
     if register.problem:
         problems.append(register.problem)
-    sections = (rules.render(ruleset, state["revision"] if state else None), aiuse.render(policy), aitools.render(register))
+    estate_map = estate.load(repo)
+    if estate_map.problem:
+        problems.append(estate_map.problem)
+    remote = detect.remote_address(repo)
+    sections = (
+        rules.render(ruleset, state["revision"] if state else None),
+        aiuse.render(policy),
+        aitools.render(register),
+        estate.render(estate_map, remote.slug if remote else None),
+    )
     text = pointer_text(address, "\n".join(sections))
     units = [_Unit("the instruction file", f"/{RULES_FILE}", {RULES_FILE: text.encode("utf-8")})]
     team_skills = _skill_units(copy, problems)
