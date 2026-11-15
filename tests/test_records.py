@@ -87,7 +87,16 @@ HANDOVER = {
     "next_steps": "Two tests in CheckoutTests still fail. The rounding is the likely cause.",
 }
 STORY = {"title": "Show the delivery fee in the checkout total", "url": "https://github.com/acme/shop-ios/issues/311", "epic": "Checkout", "milestone": None}
-STATE = {"step": "checks-run", "commit": COMMIT, "results": [RESULT], "pending_choice": "Fix the findings, or leave the code as it is?", "next_action": "Wait for the developer's choice."}
+STATE_RESULT = {**RESULT, "kind": "checks", "commit": COMMIT, "team_repo_revision": TEAM_REVISION, "at": "2026-11-15T10:14:00Z"}
+STATE = {
+    "step": "checks-run",
+    "commit": COMMIT,
+    "results": [STATE_RESULT],
+    "pending_choice": "Fix the findings, or leave the code as it is?",
+    "next_action": "Wait for the developer's choice.",
+    "story": STORY,
+    "claims": [{"author": "pat-dev", "machine": "pats-macbook", "at": "2026-11-15T09:00:00Z"}],
+}
 STARTED = changed(EVENT, step="started", story=STORY, results=[], agent={"produced": False, "files": []})
 CHOICE = changed(EVENT, step="choice-made", choice={"selected": "fix-findings", "detail": "Only the force unwrap."})
 CHECKPOINT = changed(EVENT, step="checkpoint", state=STATE)
@@ -248,6 +257,11 @@ class EventTests(Cases):
                 "an unknown step": (changed(EVENT, step="deployed"), "step must be one of"),
                 "an unknown choice": (nested(CHOICE, ("choice", "selected"), "ship-it"), "selected must be one of"),
                 "a state whose step is the checkpoint itself": (nested(CHECKPOINT, ("state", "step"), "checkpoint"), "must be the step the task had reached"),
+                "a saved result without the commit it was made for": (nested(CHECKPOINT, ("state", "results", 0, "commit"), ...), "missing fields: commit"),
+                "a saved result of an unknown kind": (nested(CHECKPOINT, ("state", "results", 0, "kind"), "coverage"), "kind must be one of"),
+                "a saved claim by no account": (nested(CHECKPOINT, ("state", "claims", 0, "author"), "Pat Smith"), "author must be a GitHub account name"),
+                "a saved claim with an extra field": (nested(CHECKPOINT, ("state", "claims", 0, "team"), "ios"), "unknown fields: team"),
+                "a state without the story field": (nested(CHECKPOINT, ("state", "story"), ...), "missing fields: story"),
                 "a story link with a sign-in": (nested(STARTED, ("story", "url"), "https://pat:pw@example.com/x"), "https address with no sign-in"),
                 "a story link that is not https": (nested(STARTED, ("story", "url"), "javascript:alert(1)"), "https address"),
             },

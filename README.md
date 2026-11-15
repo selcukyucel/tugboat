@@ -598,7 +598,7 @@ The shared task history will be a set of small JSON files, one per record, writt
 | Record | Schema | Holds |
 |---|---|---|
 | Claim | `tug.claim/1` | This developer, on this machine, took this story at this time. It is advisory and locks nothing. |
-| Task event | `tug.task-event/1` | One step of the work: branch, commit, session, agent tool, team repo revision, the results so far, the next action, and how many lines an agent wrote in each file. |
+| Task event | `tug.task-event/1` | One step of the work: branch, commit, session, agent tool, team repo revision, the results of that step, the next action, and how many lines an agent wrote in each file. |
 | Report | `tug.report/1` | One of four: check results, analysis findings, the acceptance report, or the QA pack. Bound to its commit. |
 | Session summary | `tug.session-summary/1` | What one agent session did, in a few paragraphs: files touched, decisions, open questions. |
 | Handover note | `tug.handover/1` | Why a task was released, and what to do next. |
@@ -610,7 +610,8 @@ Every record carries its own ID, its time in UTC, the tool version that wrote it
 - **The four results stay distinct:** passed, failed, blocked, untested. Several checks are a pass only when each one passed.
 - **An analysis that did not run to the end cannot read as clean.** "Passed" with findings is refused, and "blocked" needs its reason.
 - **An acceptance report cannot be empty and successful.** A story without criteria gives a blocked report with its reason. A criterion is "met" only with evidence, and otherwise "unverified".
-- **A checkpoint event holds the task's full state**, so a long task loses nothing when its early records expire.
+- **A checkpoint event holds the task's full state**, so a long task loses nothing when its early records expire: the step, each result with the commit and the team repo revision it was made for, the pending choice, the next action, the story, and who holds the task.
+- **An event's results are the ones made at that step**, for that event's commit. The results a task has in all are worked out from its events.
 - **Never in a record:** the raw chat, and source code beyond file paths. No field exists for either, and text that reads like a chat transcript is refused.
 - **A record from a newer tool is skipped, not guessed at.** A schema number higher than this tool knows is reported as such.
 - **The check for secrets is a separate step** before a record is published. It is not built yet.
@@ -638,6 +639,28 @@ Records live in the team repo, on one branch named `records`, and nowhere else. 
 - **The branch starts on the first machine that writes a record**, empty and with no history in common with `main`. It reaches GitHub with the first publish. A machine that already fetched the branch checks that out.
 - **An agent's edit tools are kept out of Tugboat's whole folder on the machine**, `~/.tugboat/`. See "The check before each action".
 - **`tug remove` asks before it deletes a clone whose records were not all published.** See "Remove Tugboat".
+
+### How the state of a task is worked out
+
+No file holds the state of a task. It is computed, each time it is needed, from the records of the story for one app repo. This version has the computation. The brief that shows it comes with a later task.
+
+- **A record older than six months is left out on every read**, by its own time and not by when it was committed. Six months are counted on the calendar. Nothing in a state, a result, or a history comes from such a record.
+- **The newest checkpoint is the base.** Events after it are applied on top. Events before it stay in the history and no longer change the state.
+- **The newest result of each check counts.** An earlier one stays in the history.
+- **A result counts only for what it was made for.** It is marked stale, with the reason, when:
+
+| What changed | Which results go stale |
+|---|---|
+| The commit the app repo is on | Every result |
+| The team's rules (anything under `policies/` in the team repo) | The analysis |
+| An acceptance criterion of the story | The acceptance report and the QA pack |
+
+- **A change elsewhere in the team repo is no change of the rules.** A merged knowledge note leaves the analysis current.
+- **Criteria are compared as text.** The same criteria in another order are no change.
+- **What cannot be worked out is not assumed.** When the old revision of the team repo is not in the clone, or the acceptance report is no longer among the records, the result is marked stale.
+- **Who holds a task:** every claim, minus those their own author released with a handover note afterwards. Two claims are shown side by side. Nothing is locked.
+- **A record from a newer tool is skipped and named.** So is a file that cannot be read.
+- **A result that names no report is judged by its commit only**, because nothing says what kind of result it is.
 
 Why not a small database: it would need a conversion before each check and before each publish, a second way to read a record, and locking for two writers. The files need none of that, and a person can read them.
 

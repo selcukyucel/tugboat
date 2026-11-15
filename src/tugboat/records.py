@@ -5,7 +5,7 @@ is written once and never edited: the current state of a task is worked out
 from its records. There are five kinds:
 
 - a claim: this developer, on this machine, took this story
-- a task event: one step of the work, with its results and what comes next
+- a task event: one step of the work, with the results of that step and what comes next
 - a report: check results, analysis findings, the acceptance report, or the QA pack
 - a session summary: what one agent session did, in a few paragraphs
 - a handover note: why a task was released, and what to do next
@@ -189,15 +189,20 @@ def _task(value: object, label: str) -> dict[str, Any]:
     return {"tracker": tracker, "key": key}
 
 
+def _login(value: object, label: str) -> str:
+    author = _line(value, label, 39)
+    if not _LOGIN.fullmatch(author):
+        raise DataError(f"{label} must be a GitHub account name")
+    return author
+
+
 def _common(record: Mapping[str, Any], kind: str, label: str) -> dict[str, Any]:
     found, version = schema_of(record)
     if found != kind:
         raise DataError(f'{label} must have "schema": "{schema_name(kind)}" (found {record["schema"]!r})')
     if version > VERSIONS[kind]:
         raise NewerSchema(kind, version)
-    author = _line(record["author"], f"{label} author", 39)
-    if not _LOGIN.fullmatch(author):
-        raise DataError(f"{label} author must be a GitHub account name")
+    author = _login(record["author"], f"{label} author")
     return {
         "schema": schema_name(kind),
         "id": _record_id(record["id"], f"{label} id"),
@@ -228,7 +233,7 @@ def _session(record: Mapping[str, Any], label: str, *, required: bool = False) -
 
 
 def _results(value: object, label: str) -> list[dict[str, Any]]:
-    """What each check said, by name. `report` is the ID of the report record that holds the detail."""
+    """What each check said at this step, by name, for the event's own commit. `report` is the ID of the report record that holds the detail."""
     results = []
     for index, raw in enumerate(require_list(value, label, maximum=30)):
         item_label = f"{label}[{index}]"
@@ -293,19 +298,62 @@ def _choice(value: object, label: str) -> dict[str, Any]:
     }
 
 
+def _state_results(value: object, label: str) -> list[dict[str, Any]]:
+    """The results a task has at a checkpoint. Each one keeps what it was made for, so that it can still be judged stale after its own event expired."""
+    results = []
+    fields = frozenset({"name", "status", "summary", "report", "kind", "commit", "team_repo_revision", "at"})
+    for index, raw in enumerate(require_list(value, label, maximum=30)):
+        item_label = f"{label}[{index}]"
+        item = require_object(raw, item_label)
+        require_exact_fields(item, required=fields, label=item_label)
+        results.append(
+            {
+                "name": validate_slug(item["name"], f"{item_label} name", 60),
+                "status": require_choice(item["status"], f"{item_label} status", RESULT_STATUSES),
+                "summary": _optional(item["summary"], _line, f"{item_label} summary", 300),
+                "report": _optional(item["report"], _record_id, f"{item_label} report"),
+                "kind": _optional(item["kind"], require_choice, f"{item_label} kind", REPORT_KINDS),
+                "commit": _revision(item["commit"], f"{item_label} commit"),
+                "team_repo_revision": _revision(item["team_repo_revision"], f"{item_label} team_repo_revision"),
+                "at": canonical_timestamp(item["at"], f"{item_label} at"),
+            }
+        )
+    require_unique([result["name"] for result in results], label)
+    return results
+
+
+def _claims(value: object, label: str) -> list[dict[str, Any]]:
+    claims = []
+    for index, raw in enumerate(require_list(value, label, maximum=20)):
+        item_label = f"{label}[{index}]"
+        item = require_object(raw, item_label)
+        require_exact_fields(item, required=frozenset({"author", "machine", "at"}), label=item_label)
+        claims.append(
+            {
+                "author": _login(item["author"], f"{item_label} author"),
+                "machine": _line(item["machine"], f"{item_label} machine", 100),
+                "at": canonical_timestamp(item["at"], f"{item_label} at"),
+            }
+        )
+    return claims
+
+
 def _state(value: object, label: str) -> dict[str, Any]:
     """The full current state of a task, kept in a checkpoint so that the task survives the expiry of its early records."""
     state = require_object(value, label)
-    require_exact_fields(state, required=frozenset({"step", "commit", "results", "pending_choice", "next_action"}), label=label)
+    require_exact_fields(state, required=frozenset({"step", "commit", "results", "pending_choice", "next_action", "story", "claims"}), label=label)
     step = require_choice(state["step"], f"{label} step", STEPS)
     if step == CHECKPOINT:
         raise DataError(f"{label} step must be the step the task had reached, not 'checkpoint'")
     return {
         "step": step,
         "commit": _revision(state["commit"], f"{label} commit"),
-        "results": _results(state["results"], f"{label} results"),
+        "results": _state_results(state["results"], f"{label} results"),
         "pending_choice": _optional(state["pending_choice"], _line, f"{label} pending_choice", 500),
         "next_action": _line(state["next_action"], f"{label} next_action", 500),
+        # The story and who holds it, because the records that said so first may have expired by now.
+        "story": _optional(state["story"], _story, f"{label} story"),
+        "claims": _claims(state["claims"], f"{label} claims"),
     }
 
 
@@ -338,7 +386,11 @@ _STEP_FIELDS = {STARTED: "story", CHOICE_MADE: "choice", CHECKPOINT: "state"}
 
 
 def validate_event(data: object) -> dict[str, Any]:
-    """A task event: one step of the work, with the results so far and what comes next."""
+    """A task event: one step of the work, with the results of that step and what comes next.
+
+    The results are the ones made at this step, for this event's commit. The
+    results a task has in all are worked out from its events.
+    """
     label = "task event"
     record = require_object(data, label)
     require_exact_fields(
