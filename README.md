@@ -588,6 +588,32 @@ A made-up secret in a test can fail the scan. gitleaks reads a `.gitleaks.toml` 
 
 The other two optional CI checks, the guardrail pack and dependency verification, are saved as a choice and have no workflow yet.
 
+## Task records
+
+The shared task history will be a set of small JSON files, one per record, written once and never edited. This version defines and checks their formats. Nothing writes, publishes, or reads a record yet: that comes with the next tasks.
+
+| Record | Schema | Holds |
+|---|---|---|
+| Claim | `tug.claim/1` | This developer, on this machine, took this story at this time. It is advisory and locks nothing. |
+| Task event | `tug.task-event/1` | One step of the work: branch, commit, session, agent tool, team repo revision, the results so far, the next action, and how many lines an agent wrote in each file. |
+| Report | `tug.report/1` | One of four: check results, analysis findings, the acceptance report, or the QA pack. Bound to its commit. |
+| Session summary | `tug.session-summary/1` | What one agent session did, in a few paragraphs: files touched, decisions, open questions. |
+| Handover note | `tug.handover/1` | Why a task was released, and what to do next. |
+
+Every record carries its own ID, its time in UTC, the tool version that wrote it, the story, the app repo, the platform, the author's GitHub account, and the machine.
+
+- **A missing field is refused, and so is a field nobody defined**, at every depth.
+- **The story has one shape for both trackers:** `SHOP-123` for Jira, `owner/name#123` for GitHub Projects.
+- **The four results stay distinct:** passed, failed, blocked, untested. Several checks are a pass only when each one passed.
+- **An analysis that did not run to the end cannot read as clean.** "Passed" with findings is refused, and "blocked" needs its reason.
+- **An acceptance report cannot be empty and successful.** A story without criteria gives a blocked report with its reason. A criterion is "met" only with evidence, and otherwise "unverified".
+- **A checkpoint event holds the task's full state**, so a long task loses nothing when its early records expire.
+- **Never in a record:** the raw chat, and source code beyond file paths. No field exists for either, and text that reads like a chat transcript is refused.
+- **A record from a newer tool is skipped, not guessed at.** A schema number higher than this tool knows is reported as such.
+- **The check for secrets is a separate step** before a record is published. It is not built yet.
+
+Until records are published, these formats can still change without a new schema number.
+
 ## Proposing a change to the team repo
 
 Team content changes only through a pull request that a person merges. `tug team propose` makes one:
