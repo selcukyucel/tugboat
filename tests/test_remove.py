@@ -5,11 +5,13 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from tugboat import ciworkflows, paths, pretool, profile, repolist, settingsmerge
+from tugboat import ciworkflows, paths, pretool, profile, recordstore, repolist, settingsmerge
 
 from test_capture import draft
+from test_formats import changed
 from test_init import IOS_FILES, TEAM
 from test_pretool import PROTECTED
+from test_records import CLAIM, EVENT
 from test_rules import RuleCase
 from test_sync import run
 
@@ -208,7 +210,7 @@ class DraftTests(RemoveCase):
     def test_with_yes_the_drafts_need_their_own_answer(self):
         code, out, err = self.remove(self.ios, "--yes")
         self.assertEqual(code, 1)
-        self.assertIn("holds drafts that nobody proposed yet. Pass --drafts keep or --drafts delete. Nothing was removed.", err)
+        self.assertIn("holds drafts that nobody shared yet. Pass --unpublished keep or --unpublished delete. Nothing was removed.", err)
         self.assertIn("1 file in .tugboat/capture/ is a draft that nobody proposed yet: knowledge/auth/token-refresh.md", out)
         self.assertTrue(self.note.is_file())
         self.assertTrue(self.set_up(self.ios))
@@ -223,7 +225,7 @@ class DraftTests(RemoveCase):
     def test_kept_drafts_are_moved_out_of_the_repo(self):
         text = self.note.read_text(encoding="utf-8")
         out = self.removed(self.ios, answers=["1", "y", "n"])
-        (kept,) = paths.kept_drafts_folder().iterdir()
+        (kept,) = paths.kept_folder().iterdir()
         self.assertTrue(kept.name.startswith("ios-"))
         self.assertEqual((kept / "capture/knowledge/auth/token-refresh.md").read_text(encoding="utf-8"), text)
         self.assertIn(f"Moved 1 draft file to {kept}.", out)
@@ -231,9 +233,45 @@ class DraftTests(RemoveCase):
         self.assertTrue(self.untouched(self.ios))
 
     def test_deleted_drafts_go_with_the_folder(self):
-        self.removed(self.ios, "--yes", "--drafts", "delete")
+        self.removed(self.ios, "--yes", "--drafts", "delete")  # the older name of --unpublished still works
         self.assertTrue(self.untouched(self.ios))
-        self.assertFalse(paths.kept_drafts_folder().exists())
+        self.assertFalse(paths.kept_folder().exists())
+
+
+class UnpublishedRecordTests(RemoveCase):
+    def setUp(self):
+        super().setUp()
+        self.claim = recordstore.write(self.ios, CLAIM)
+        self.event = recordstore.write(self.ios, changed(EVENT, id="20261115T101600Z-aaaaaaaaaaaa", at="2026-11-15T10:16:00Z"))
+
+    def test_records_that_were_not_published_need_their_own_answer(self):
+        code, out, err = self.remove(self.ios, "--yes")
+        self.assertEqual(code, 1)
+        self.assertIn("holds task records that nobody shared yet. Pass --unpublished keep or --unpublished delete. Nothing was removed.", err)
+        self.assertIn("2 task records in .tugboat/records/ were not published yet: github-projects/acme/shop-ios/311/", out)
+        self.assertEqual(len(recordstore.read_all(self.ios).records), 2)
+        self.assertTrue(self.set_up(self.ios))
+
+    def test_a_person_is_asked_and_told_that_publishing_is_not_built(self):
+        code, out, err = self.remove(self.ios, answers=["3"])
+        self.assertEqual((code, err), (1, "tug: stopped. Nothing was removed.\n"))
+        self.assertIn("What should happen to the task records?", out)
+        self.assertIn("Publishing task records is not built yet.", out)
+        self.assertNotIn("tug capture propose", out)
+        self.assertEqual(len(recordstore.read_all(self.ios).records), 2)
+
+    def test_kept_records_are_moved_out_of_the_repo_as_they_are(self):
+        out = self.removed(self.ios, "--yes", "--unpublished", "keep")
+        (kept,) = paths.kept_folder().iterdir()
+        self.assertIn(f"Moved 2 task records to {kept}.", out)
+        for stored in (self.claim, self.event):
+            self.assertEqual(json.loads((kept / "records" / stored.path).read_text(encoding="utf-8")), stored.record)
+        self.assertTrue(self.untouched(self.ios))
+
+    def test_deleted_records_go_with_the_folder(self):
+        self.removed(self.ios, "--yes", "--unpublished", "delete")
+        self.assertTrue(self.untouched(self.ios))
+        self.assertFalse(paths.kept_folder().exists())
 
 
 class TeamRepoTests(RemoveCase):

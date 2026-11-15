@@ -283,7 +283,7 @@ class HookCommandTests(RuleCase):
         self.assertIn("Build settings hold keys and endpoints.", output["permissionDecisionReason"])
 
     def test_tugboats_own_files_are_guarded_and_the_draft_folder_is_free(self):
-        for path in (".tugboat/team/policies/ios/IOS-001.md", ".claude/rules/tugboat.md", ".claude/settings.local.json", ".tugboat/permissions.json"):
+        for path in (".tugboat/team/policies/ios/IOS-001.md", ".claude/rules/tugboat.md", ".claude/settings.local.json", ".tugboat/permissions.json", ".tugboat/records/jira/SHOP-123/20261115T101530Z-3f9a1c2b7d4e.json"):
             with self.subTest(path=path):
                 self.assertEqual(self.call(self.write(path, claude=False))[1]["permissionDecision"], "deny")
         self.assertIsNone(self.call(self.write(".tugboat/capture/knowledge/auth/token-refresh.md"))[1])

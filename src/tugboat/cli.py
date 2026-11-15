@@ -572,7 +572,7 @@ def _configure_remove(parser: argparse.ArgumentParser) -> None:
 
     parser.add_argument("--all", action="store_true", dest="everything", help="every app repo that Tugboat set up on this machine, one after the other")
     parser.add_argument("--yes", action="store_true", help="remove without being asked. An offer is then taken only when its own option is given.")
-    parser.add_argument("--drafts", choices=remove.DRAFT_CHOICES, help="what to do with drafts nobody proposed yet: keep moves them out of the repo, delete removes them. Asked for when not given.")
+    parser.add_argument("--unpublished", "--drafts", dest="unpublished", choices=remove.UNPUBLISHED_CHOICES, help="what to do with drafts nobody proposed yet and task records not published yet: keep moves them out of the repo, delete removes them. Asked for when not given. --drafts is the older name.")
     parser.add_argument("--profile-pr", action="store_true", help="also open the pull request in the team repo that takes the app repo out of the project profile")
     parser.add_argument("--delete-clone", action="store_true", help="also delete a team repo clone that no app repo on this machine uses any more")
 
@@ -580,7 +580,7 @@ def _configure_remove(parser: argparse.ArgumentParser) -> None:
 def _remove(args: argparse.Namespace) -> int:
     from tugboat import remove
 
-    options = remove.Options(yes=args.yes, everything=args.everything, drafts=args.drafts, profile_pr=args.profile_pr, delete_clone=args.delete_clone)
+    options = remove.Options(yes=args.yes, everything=args.everything, unpublished=args.unpublished, profile_pr=args.profile_pr, delete_clone=args.delete_clone)
     return remove.run(".", options)
 
 

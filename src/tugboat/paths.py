@@ -47,6 +47,6 @@ def app_repos_file() -> Path:
     return tug_home() / "app-repos.json"
 
 
-def kept_drafts_folder() -> Path:
-    """Where `tug remove` puts the drafts a developer chose to keep."""
-    return tug_home() / "kept-drafts"
+def kept_folder() -> Path:
+    """Where `tug remove` puts the drafts and the unpublished task records a developer chose to keep."""
+    return tug_home() / "kept"
