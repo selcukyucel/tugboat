@@ -40,3 +40,13 @@ def pending_profile_file(address: TeamRepoAddress) -> Path:
 def release_check_file() -> Path:
     """What this machine last learned about the tool's own releases."""
     return tug_home() / "release-check.json"
+
+
+def app_repos_file() -> Path:
+    """The list of the app repos Tugboat set up on this machine."""
+    return tug_home() / "app-repos.json"
+
+
+def kept_drafts_folder() -> Path:
+    """Where `tug remove` puts the drafts a developer chose to keep."""
+    return tug_home() / "kept-drafts"

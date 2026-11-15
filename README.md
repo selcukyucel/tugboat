@@ -38,7 +38,7 @@ The other ways are on [uv's installation page](https://docs.astral.sh/uv/getting
 **2. Install Tugboat.**
 
 ```sh
-uv tool install git+https://github.com/selcukyucel/tugboat@v0.27.1
+uv tool install git+https://github.com/selcukyucel/tugboat@v0.28.0
 tug version
 ```
 
@@ -144,7 +144,7 @@ One machine can serve several projects. Each project's minimum is checked in tha
 | `tug doctor observe` | The part of the setup check that an agent runs inside a session, through the skill `tug-setup-check` | Works |
 | `tug update` | Updates `tug` to the newest release | Works |
 | `tug expire` | Removes records older than six months, after confirmation | Not built yet |
-| `tug remove` | Takes Tugboat out of a repo, or out of every repo on the machine | Not built yet. See "Remove Tugboat" for the steps by hand. |
+| `tug remove` | Takes Tugboat out of a repo, or out of every repo on the machine | Works. See "Remove Tugboat". |
 | `tug hook session-start` | Called by the agent tool at the start of a session. Syncs and reports to the agent. | Works |
 | `tug hook pre-tool-use` | Called by the agent tool before each tool call. Allows, asks, or denies. | Works |
 
@@ -852,9 +852,56 @@ How the hooks are seen: each hook leaves a mark when it runs, in `.tugboat/obser
 
 ## Remove Tugboat
 
-`tug remove` is not built yet. Until it is, these are the steps by hand. They take Tugboat out of one app repo. Nothing in GitHub changes.
+`tug remove`, run in a terminal inside an app repo, takes Tugboat out of that repo. Nothing in GitHub changes unless you ask for it.
 
-Do the steps in this order. The hooks come first, because a hook that calls a `tug` that is gone stops the agent: see the next section.
+```sh
+cd path/to/the/app/repo
+tug remove
+```
+
+It works in this order:
+
+1. **It lists what it will remove and what it will leave.** Nothing is removed until you answer `y`.
+2. **It asks about drafts.** `.tugboat/capture/` can hold notes and decision records that an agent drafted and nobody proposed yet. You choose: keep them (they are moved to `~/.tugboat/kept-drafts/`), delete them, or stop and propose them first with `tug capture propose` and `tug decision propose`.
+3. **It removes.** The hooks go first.
+4. **It offers a pull request** in the team repo that takes the app repo out of the project profile. Say yes only when the whole team stops using Tugboat in that repo. Without it, nothing in the team repo changes.
+5. **It offers to delete the clone of the team repo**, when no app repo on this machine uses it any more.
+6. **It prints the command that uninstalls the tool**, when no app repo on this machine is set up any more. Tugboat does not uninstall itself.
+
+| What | What `tug remove` does |
+|---|---|
+| Tugboat's hooks and permission rules in `.claude/settings.local.json` | Takes them out. Settings of your own stay. The file is deleted when it holds nothing else. |
+| The generated files under `.claude/` | Deletes them, also one that was edited after Tugboat wrote it. A file that Git tracks now is left. |
+| The folder `.tugboat/` | Deletes it, after the question about drafts. |
+| Tugboat's block in the repo's local Git exclude file | Takes it out. Every other line stays. |
+| `.github/workflows/tugboat-secret-scan.yml` | Deletes it only while it is exactly what Tugboat wrote and nobody committed it. A committed one belongs to the repo: a pull request there removes it. |
+| The team repo, and pull requests that were opened | Left as they are. |
+
+Good to know:
+
+- **Without a terminal it only lists.** `tug remove` then prints the list and removes nothing. `--yes` removes without the question.
+- **With `--yes`, each offer needs its own option.** `--drafts keep` or `--drafts delete`, `--profile-pr`, `--delete-clone`. A repo that holds drafts is not touched until `--drafts` says what to do with them.
+- **`tug remove --all` does the same for every app repo on this machine**, one after the other. A `n` skips that repo and goes on to the next.
+- **The list of app repos is in `~/.tugboat/app-repos.json`.** Init and sync write it. A repo that a tug older than 0.28.0 set up joins the list at its next sync.
+- **Git may show a file again.** When `.claude/settings.local.json` keeps settings of your own, Tugboat's exclude block no longer hides it. The command says so.
+- **A tracked settings file is not changed.** If Git tracks `.claude/settings.local.json` in the repo, Tugboat's hooks stay in it, the command says so, and it exits with 1.
+- **An agent cannot run it unasked.** The check before each action asks you on Claude Code and denies on Copilot when an agent runs `tug remove`.
+- **`tug init` sets the repo up again** at any time.
+
+After the last repo, the tool and its folder are yours to remove:
+
+```sh
+uv tool uninstall tugboat   # the command
+rm -rf ~/.tugboat           # kept clones, kept drafts, and Tugboat's state
+```
+
+`~/.tugboat/pending/` holds profile changes that this machine proposed and nobody merged yet. They are lost with the folder. The pull requests themselves stay in GitHub.
+
+### By hand, when `tug` is missing
+
+These steps do what `tug remove` does for one app repo. Use them when the `tug` command is gone: see the next section.
+
+Do the steps in this order. The hooks come first, because a hook that calls a `tug` that is gone stops the agent.
 
 **1. Take Tugboat's entries out of `.claude/settings.local.json`.**
 
@@ -869,25 +916,16 @@ sed -n '/^# >>> tugboat/,/^# <<< tugboat/p' "$(git rev-parse --git-path info/exc
 ```
 
 - Delete each file and folder it names, apart from `.claude/settings.local.json` when you kept that file in step 1.
-- `.tugboat/capture/` holds notes and decision records an agent drafted and nobody proposed yet. Look there first. `tug capture propose` and `tug decision propose` send them to the team repo.
+- `.tugboat/capture/` holds notes and decision records an agent drafted and nobody proposed yet. Look there first.
 
 **3. Delete that block from the exclude file**, from the line `# >>> tugboat` to the line `# <<< tugboat`.
 
-Now a new agent session in the repo loads no Tugboat file, and no hook calls `tug`. `tug init` sets the repo up again at any time.
+Now a new agent session in the repo loads no Tugboat file, and no hook calls `tug`.
 
 What stays, on purpose:
 
-- **Files the repo tracks.** Tugboat writes one: `.github/workflows/tugboat-secret-scan.yml`, when the project uses the CI secret scan. It belongs to the project, not to your machine. Leave it.
+- **Files the repo tracks.** Tugboat writes one: `.github/workflows/tugboat-secret-scan.yml`, when the project uses the CI secret scan. Once committed it belongs to the project, not to your machine. Leave it.
 - **The team repo.** The project profile still lists the app repo, and pull requests that were opened stay. An app repo leaves a project through a pull request in the team repo that takes it out of `profile.json`.
-
-To take Tugboat off the machine, after every app repo on it is done:
-
-```sh
-rm -rf ~/.tugboat           # the clones of the team repos, and Tugboat's state
-uv tool uninstall tugboat   # the command
-```
-
-`~/.tugboat/pending/` holds profile changes that this machine proposed and nobody merged yet. They are lost with the folder. The pull requests themselves stay in GitHub.
 
 ## When the `tug` command is missing
 
@@ -906,7 +944,7 @@ It happens when Tugboat was uninstalled while a repo was still set up, when a re
 There are two ways out.
 
 - **Install Tugboat again**, with the command from "Set up". Then run `tug sync` in the app repo. Sync writes the hooks again with the path of the `tug` that is installed now.
-- **Or take Tugboat out of the repo by hand**, with the steps in "Remove Tugboat". Step 1 alone lets the agent work again.
+- **Or take Tugboat out of the repo by hand**, with the steps under "By hand" in "Remove Tugboat". Step 1 alone lets the agent work again.
 
 The instruction file Tugboat generates, `.claude/rules/tugboat.md`, tells the agent the same, so that it can tell you.
 

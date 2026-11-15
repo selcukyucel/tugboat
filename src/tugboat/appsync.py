@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import contextlib
 from pathlib import Path
 from typing import NamedTuple
 
-from tugboat import aiuse, ciworkflows, hostfiles, profile, releases, sync, teamcopy
+from tugboat import aiuse, ciworkflows, hostfiles, profile, releases, repolist, sync, teamcopy
 from tugboat.address import TeamRepoAddress
 from tugboat.errors import TugError
 from tugboat.version import Version, installed_version, parse_version
@@ -74,6 +75,10 @@ def run(repo: Path, address: TeamRepoAddress, *, force: bool = False, quick: boo
         host = hostfiles.apply(repo, address)
     except TugError as error:
         problem = str(error)
+    if host is not None:
+        # A repo that an older tool set up joins the list here. A list that cannot be written must not stop a sync.
+        with contextlib.suppress(Exception):
+            repolist.record(repo, address.url)
     if copy is not None:
         # Read from the copy that was just brought up to date.
         step = aiuse.unfinished(aiuse.load(repo))

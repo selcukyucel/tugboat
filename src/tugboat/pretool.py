@@ -311,6 +311,17 @@ def git_problem(command: str, cwd: str, shared: tuple[str, ...], current_branch:
     return None
 
 
+def removes_tugboat(command: str) -> bool:
+    """True for a shell command that runs `tug remove`, which takes these very checks out of the repo."""
+    if "remove" not in command:
+        return False
+    for segment in _segments(_tokens(command)):
+        words = _command_words(segment)
+        if words and os.path.basename(words[0]) == "tug" and _operands(words)[:1] == ["remove"]:
+            return True
+    return False
+
+
 # ------------------------------------------------------------ the decision
 
 
@@ -381,6 +392,11 @@ def decide(
     problem = git_problem(command, cwd, shared, current_branch)
     if problem:
         return Decision(DENY, f"Tugboat: this git command is not allowed, because {problem}. A shared branch is changed through a pull request. If the developer wants this, they run it themselves.")
+    if removes_tugboat(command):
+        what = "Tugboat: `tug remove` takes Tugboat's checks out of this repo."
+        if surface == CLAUDE:
+            return Decision(ASK, f"{what} The developer decides whether the agent may run it.")
+        return Decision(DENY, f"{what} An agent may not run it here. Tell the developer, who can run it themselves in a terminal.")
     for given, removal in shell_writes(command):
         path = repo_relative(repo, cwd, given)
         if path is None:

@@ -236,6 +236,12 @@ def with_repo(profile: dict[str, Any], *, github: str, default_branch: str, plat
     return formats.validate_profile({**profile, "app_repos": repos})
 
 
+def without_repo(profile: dict[str, Any], github: str) -> dict[str, Any]:
+    """A copy that no longer lists this app repo."""
+    repos = [dict(repo) for repo in profile["app_repos"] if repo["github"].lower() != github.lower()]
+    return formats.validate_profile({**profile, "app_repos": repos})
+
+
 def below_minimum(profile: dict[str, Any] | None) -> bool:
     """True when the installed tool is older than the project accepts."""
     return profile is not None and installed_version() < parse_version(profile["minimum_tool_version"])

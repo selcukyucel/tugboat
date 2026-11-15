@@ -567,6 +567,23 @@ def _doctor(args: argparse.Namespace) -> int:
     return EXIT_ERROR if report.failed else EXIT_OK
 
 
+def _configure_remove(parser: argparse.ArgumentParser) -> None:
+    from tugboat import remove
+
+    parser.add_argument("--all", action="store_true", dest="everything", help="every app repo that Tugboat set up on this machine, one after the other")
+    parser.add_argument("--yes", action="store_true", help="remove without being asked. An offer is then taken only when its own option is given.")
+    parser.add_argument("--drafts", choices=remove.DRAFT_CHOICES, help="what to do with drafts nobody proposed yet: keep moves them out of the repo, delete removes them. Asked for when not given.")
+    parser.add_argument("--profile-pr", action="store_true", help="also open the pull request in the team repo that takes the app repo out of the project profile")
+    parser.add_argument("--delete-clone", action="store_true", help="also delete a team repo clone that no app repo on this machine uses any more")
+
+
+def _remove(args: argparse.Namespace) -> int:
+    from tugboat import remove
+
+    options = remove.Options(yes=args.yes, everything=args.everything, drafts=args.drafts, profile_pr=args.profile_pr, delete_clone=args.delete_clone)
+    return remove.run(".", options)
+
+
 COMMANDS: tuple[Command, ...] = (
     Command("version", "Print the installed version", _version),
     Command("init", "Set up the app repo it is run in", _init, _configure_init),
@@ -581,7 +598,7 @@ COMMANDS: tuple[Command, ...] = (
     Command("doctor", "Check that this machine and this app repo are ready, from what is on disk", _doctor, _configure_doctor),
     Command("update", "Update tug to the newest release", _update, _configure_update),
     Command("expire", "Remove records older than six months, after confirmation"),
-    Command("remove", "Take Tugboat out of this repo, or out of every repo on this machine"),
+    Command("remove", "Take Tugboat out of this repo, or out of every repo on this machine", _remove, _configure_remove),
     Command("team", "Start, check, or propose a change to a team repo: `tug team new`, `check`, `propose`", _team, _configure_team),
     Command("hook", "Called by the agent tool's hooks. Not typed by a developer.", _hook, _configure_hook),
 )

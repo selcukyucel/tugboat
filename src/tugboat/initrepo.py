@@ -22,7 +22,7 @@ import shutil
 from collections.abc import Sequence
 from typing import Any, NamedTuple
 
-from tugboat import ciworkflows, detect, hostfiles, paths, profile, prompts, sync, teamcopy, teampr
+from tugboat import ciworkflows, detect, hostfiles, paths, profile, prompts, repolist, sync, teamcopy, teampr
 from tugboat.address import TeamRepoAddress, parse_team_repo_address
 from tugboat.errors import EXIT_ERROR, EXIT_OK, DataError, TugError
 from tugboat.gitrun import git
@@ -265,6 +265,8 @@ def run(start: str | os.PathLike[str], options: Options) -> int:
     print()
     print(teamcopy.render(teamcopy.refresh_copy(found.root, address), found.root))
     print(hostfiles.render(hostfiles.apply(found.root, address)))
+    # The list `tug remove --all` works from.
+    repolist.record(found.root, address.url)
     # The one file Git is meant to see: the workflow that calls the CI secret scan. It is written, never committed.
     ci = ciworkflows.apply(
         found.root,
