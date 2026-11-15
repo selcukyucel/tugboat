@@ -24,6 +24,16 @@ def _sync_file(address: TeamRepoAddress, suffix: str) -> Path:
     return tug_home() / "sync-state" / address.host / address.owner / (address.name + suffix)
 
 
+def records_worktree(address: TeamRepoAddress) -> Path:
+    """The team repo's `records` branch, checked out beside its clone. Task records are written and read here."""
+    return tug_home() / "records" / address.host / address.owner / address.name
+
+
+def records_lock_file(address: TeamRepoAddress) -> Path:
+    # Its own lock, so that a record is never kept waiting by a slow fetch of the team repo.
+    return _sync_file(address, ".records.lock")
+
+
 def sync_state_file(address: TeamRepoAddress) -> Path:
     return _sync_file(address, ".json")
 

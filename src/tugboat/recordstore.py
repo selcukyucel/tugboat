@@ -1,15 +1,19 @@
-"""The local store of task records, inside an app repo.
+"""The store of task records: the team repo's `records` branch, checked out on this machine.
 
-A record is written here first, and published later, after the developer
-confirms. The store is the folder `.tugboat/records/`. Git ignores it, and
-the check before each action keeps an agent's edit tools away from it.
+Records live in the team repo, on one branch named `records`, and nowhere
+else. On a machine that branch is checked out as a Git worktree beside the
+clone of the team repo:
 
-The format is the published one: one JSON file for one record, at the path
-it will have on the `records` branch of the team repo. So one validator
-serves both, and publishing is a copy.
+    ~/.tugboat/records/github.com/<owner>/<team repo>/
 
-    .tugboat/records/jira/SHOP-123/20261115T101530Z-3f9a1c2b7d4e.json
-    .tugboat/records/github-projects/acme/shop-ios/311/20261115T101530Z-3f9a1c2b7d4e.json
+A record is written straight into that folder. Until the developer confirms
+a checkpoint it is a file that Git has not committed: that is what
+"unpublished" means. Publishing commits and pushes the same file. So there
+is one copy of a record on a machine, in one place, and nothing about a
+record is ever written into an app repo.
+
+    jira/SHOP-123/20261115T101530Z-3f9a1c2b7d4e.json
+    github-projects/acme/shop-ios/311/20261115T101530Z-3f9a1c2b7d4e.json
 
 Three rules:
 
@@ -22,6 +26,11 @@ Three rules:
 - A reader never guesses. A file that cannot be read, that fails its
   schema, that a newer tool wrote, or that is not at the path its own
   content gives, is reported and left out.
+
+Every app repo, clone, and task worktree on the machine that belongs to the
+same team repo shares this one folder. The folder is outside every app
+repo, so the check before each action guards it by its place: an agent's
+edit tools are kept out of Tugboat's whole folder on the machine.
 """
 
 from __future__ import annotations
@@ -35,17 +44,20 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, NamedTuple
 
-from tugboat import apprepo, records
+from tugboat import paths, records, sync
+from tugboat.address import TeamRepoAddress
 from tugboat.errors import DataError, TugError
+from tugboat.gitrun import GitError, git
 from tugboat.strict_json import pretty_json, read_json_file
 
-FOLDER = "records"
-STORE = f"{apprepo.LOCAL_FOLDER}/{FOLDER}"
+BRANCH = "records"
 SUFFIX = ".json"
 TEMPORARY_PREFIX = ".writing-"
+TEMPORARY_PATTERN = f"{TEMPORARY_PREFIX}*"
 MAX_RECORD_BYTES = 512 * 1024
 MAX_FILES = 20_000  # files looked at in one read of the store
 STALE_AFTER = 3600.0  # seconds after which a temporary file is what a crash left behind
+LOCK_WAIT = 15.0
 
 
 class Stored(NamedTuple):
@@ -65,8 +77,90 @@ class Listing(NamedTuple):
     cut_short: bool = False  # the store holds more files than one read looks at
 
 
-def folder(repo: Path) -> Path:
-    return apprepo.local_folder(repo) / FOLDER
+def folder(address: TeamRepoAddress) -> Path:
+    return paths.records_worktree(address)
+
+
+def _is_worktree(store: Path) -> bool:
+    """True when the folder is a checkout of the `records` branch."""
+    if not (store / ".git").exists():
+        return False
+    try:
+        return git("symbolic-ref", "--short", "--quiet", "HEAD", cwd=store) == BRANCH
+    except GitError:
+        return False
+
+
+def _has(clone: Path, ref: str) -> bool:
+    try:
+        git("show-ref", "--verify", "--quiet", ref, cwd=clone)
+        return True
+    except GitError:
+        return False
+
+
+def _add_empty_branch(clone: Path, store: Path) -> None:
+    """Check out a new `records` branch that holds nothing and shares no history with `main`."""
+    try:
+        git("worktree", "add", "--quiet", "--orphan", "-b", BRANCH, os.fspath(store), cwd=clone)
+    except GitError:
+        _add_empty_branch_old_git(clone, store)
+
+
+def _add_empty_branch_old_git(clone: Path, store: Path) -> None:
+    # Git before 2.42 has no `worktree add --orphan`: check out `main` without a branch, then leave it for an empty one.
+    git("worktree", "add", "--quiet", "--detach", os.fspath(store), cwd=clone)
+    git("checkout", "--quiet", "--orphan", BRANCH, cwd=store)
+    git("rm", "-r", "--quiet", "--force", "--ignore-unmatch", ".", cwd=store)
+
+
+def _hide_temporary_files(clone: Path) -> None:
+    """Keep the temporary files of a write out of Git's sight, so they can never be published."""
+    exclude = Path(git("rev-parse", "--git-common-dir", cwd=clone))
+    exclude = (exclude if exclude.is_absolute() else clone / exclude) / "info" / "exclude"
+    try:
+        lines = exclude.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        lines = []
+    if TEMPORARY_PATTERN not in lines:
+        exclude.parent.mkdir(parents=True, exist_ok=True)
+        exclude.write_text("\n".join([*lines, TEMPORARY_PATTERN]) + "\n", encoding="utf-8")
+
+
+def ensure(address: TeamRepoAddress) -> Path:
+    """Make sure the `records` branch is checked out on this machine, and return its folder. Needs no network.
+
+    The branch is taken from what sync fetched, when GitHub has it already.
+    Otherwise it starts here, empty, and reaches GitHub with the first
+    publish.
+    """
+    store = folder(address)
+    if _is_worktree(store):
+        return store
+    clone = paths.team_repo_clone(address)
+    if not (clone / ".git").exists():
+        raise TugError(f"this machine has no copy of the team repo {address.url} yet. Run `tug sync` first.")
+    with sync.hold_lock(paths.records_lock_file(address), LOCK_WAIT) as held:
+        if not held:
+            raise TugError("another `tug` is setting up the task records of this team repo. Try again in a moment.")
+        if _is_worktree(store):
+            return store  # another `tug` made it while this one waited
+        if store.exists() and any(store.iterdir()):
+            raise TugError(f"{store} exists and is not the task records of {address.slug}. It was left as it is.")
+        try:
+            store.parent.mkdir(parents=True, exist_ok=True)
+            git("worktree", "prune", cwd=clone)  # forget a checkout whose folder somebody deleted
+            if _has(clone, f"refs/heads/{BRANCH}"):
+                git("worktree", "add", "--quiet", os.fspath(store), BRANCH, cwd=clone)
+            elif _has(clone, f"refs/remotes/origin/{BRANCH}"):
+                # No tracking: the clone follows `main` only, so Git would refuse. Fetching and pushing name the branch themselves.
+                git("worktree", "add", "--quiet", "--no-track", "-b", BRANCH, os.fspath(store), f"origin/{BRANCH}", cwd=clone)
+            else:
+                _add_empty_branch(clone, store)
+            _hide_temporary_files(clone)
+        except (GitError, OSError) as error:
+            raise TugError(f"the task records of {address.slug} could not be set up at {store} ({error})") from error
+    return store
 
 
 def task_path(task: Mapping[str, Any]) -> str:
@@ -103,16 +197,14 @@ def _clear_stale(directory: Path, now: float | None = None) -> None:
                     item.unlink()
 
 
-def write(repo: Path, record: object) -> Stored:
-    """Check a record and add it to the store. Raises TugError when it is not valid or is already there."""
+def write(address: TeamRepoAddress, record: object) -> Stored:
+    """Check a record and add it to the store, unpublished. Raises TugError when it is not valid or is already there."""
     checked = records.validate_record(record)
     text = pretty_json(checked)
     if len(text.encode("utf-8")) > MAX_RECORD_BYTES:
         raise DataError(f"the record is larger than {MAX_RECORD_BYTES // 1024} KB")
     relative = record_path(checked)
-    target = folder(repo) / relative
-    apprepo.local_folder(repo).mkdir(exist_ok=True)
-    apprepo.ensure_excluded(repo, f"/{apprepo.LOCAL_FOLDER}/")
+    target = ensure(address) / relative
     target.parent.mkdir(parents=True, exist_ok=True)
     _clear_stale(target.parent)
     handle, temporary = tempfile.mkstemp(dir=target.parent, prefix=TEMPORARY_PREFIX, suffix=".tmp")
@@ -144,9 +236,9 @@ def _read_one(file: Path, relative: str) -> dict[str, Any]:
     return checked
 
 
-def read_all(repo: Path, task: Mapping[str, Any] | None = None) -> Listing:
-    """Every record in the store, or every record of one story. Never raises for what a file holds."""
-    top = folder(repo)
+def read_all(address: TeamRepoAddress, task: Mapping[str, Any] | None = None) -> Listing:
+    """Every record in the store, published or not, or every record of one story. Never raises for what a file holds."""
+    top = folder(address)
     start = top / task_path(task) if task is not None else top
     found: list[Stored] = []
     unreadable: list[Unreadable] = []
@@ -155,10 +247,10 @@ def read_all(repo: Path, task: Mapping[str, Any] | None = None) -> Listing:
     if not start.is_dir() or start.is_symlink():
         return Listing((), ())
     for current, folders, files in os.walk(start):
-        folders.sort()
+        folders[:] = sorted(name for name in folders if name != ".git")
         for name in sorted(files):
-            if name.startswith(TEMPORARY_PREFIX):
-                continue  # a write that is going on, or one that a crash cut off
+            if name.startswith(TEMPORARY_PREFIX) or (name == ".git" and Path(current) == top):
+                continue  # a write that is going on, or one that a crash cut off; and Git's own pointer to the clone
             looked_at += 1
             if looked_at > MAX_FILES:
                 cut_short = True
@@ -185,17 +277,14 @@ def _moment(stamp: str) -> datetime:
     return datetime.fromisoformat(stamp.replace("Z", "+00:00"))
 
 
-def unpublished(repo: Path) -> tuple[str, ...]:
-    """The record files in the store that were not published yet, relative to the store.
-
-    Nothing publishes yet, so today that is every file. When publishing is
-    built, a file that is on the `records` branch leaves this list.
-    """
-    top = folder(repo)
-    if not top.is_dir() or top.is_symlink():
+def unpublished(address: TeamRepoAddress) -> tuple[str, ...]:
+    """The record files that Git has not committed yet, relative to the store. Empty when there is no store."""
+    store = folder(address)
+    if not _is_worktree(store):
         return ()
-    return tuple(
-        item.relative_to(top).as_posix()
-        for item in sorted(top.rglob("*"))
-        if item.is_file() and not item.is_symlink() and not item.name.startswith(TEMPORARY_PREFIX)
-    )
+    try:
+        entries = git("status", "--porcelain", "-z", "--untracked-files=all", cwd=store).split("\0")
+    except GitError:
+        return ()
+    # "??" is a new file, which is all the tool ever makes here. "A " is one that was added and not committed.
+    return tuple(sorted(entry[3:] for entry in entries if entry[:2] in {"??", "A "} and entry.endswith(SUFFIX)))

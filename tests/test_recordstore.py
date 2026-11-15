@@ -6,11 +6,11 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from tugboat import recordstore, records
+from tugboat import paths, recordstore, records, sync
 from tugboat.errors import DataError, TugError
 
 from test_formats import changed
-from test_init import IOS_FILES, InitCase
+from test_init import InitCase
 from test_records import ACCEPTANCE_REPORT, CLAIM, EVENT, HANDOVER, SUMMARY
 
 JIRA = {"tracker": "jira", "key": "SHOP-123"}
@@ -23,15 +23,17 @@ def at(record, stamp, suffix):
 
 
 class StoreCase(InitCase):
-    """An app repo that Tugboat was not set up in: the store needs only a Git repo."""
+    """A machine that has synced the team repo. The store needs the clone and no app repo."""
 
     def setUp(self):
         super().setUp()
-        self.repo = self.ios
-        self.store = self.repo / ".tugboat/records"
+        self.assertTrue(sync.sync_team_repo(self.address).ok)
+        self.repo = self.address  # every call names the team repo
+        self.clone = paths.team_repo_clone(self.address)
+        self.store = paths.records_worktree(self.address)
 
     def files(self):
-        return sorted(path.relative_to(self.store).as_posix() for path in self.store.rglob("*") if path.is_file())
+        return sorted(path.relative_to(self.store).as_posix() for path in self.store.rglob("*") if path.is_file() and path.name != ".git")
 
 
 class PathTests(unittest.TestCase):
@@ -45,15 +47,23 @@ class PathTests(unittest.TestCase):
 
 
 class WriteTests(StoreCase):
-    def test_a_record_is_one_checked_json_file_that_git_does_not_see(self):
+    def test_a_record_is_one_checked_json_file_on_the_records_branch_of_the_team_repo(self):
         stored = recordstore.write(self.repo, changed(CLAIM, at="2026-11-15T12:15:30+02:00"))
         self.assertEqual(stored.path, "github-projects/acme/shop-ios/311/20261115T101530Z-3f9a1c2b7d4e.json")
         file = self.store / stored.path
         self.assertEqual(json.loads(file.read_text(encoding="utf-8")), CLAIM)  # the checked form: the time is in UTC
         self.assertEqual(stored.record, CLAIM)
         self.assertEqual(stat.S_IMODE(file.stat().st_mode), 0o444)
-        self.assertEqual(self.git(self.repo, "status", "--porcelain"), "")
         self.assertEqual(self.files(), [stored.path])
+        # The folder is the team repo's `records` branch, which shares nothing with `main`.
+        self.assertEqual(self.git(self.store, "symbolic-ref", "--short", "HEAD"), "records")
+        self.assertEqual(self.git(self.store, "rev-parse", "--path-format=absolute", "--git-common-dir"), os.fspath(self.clone / ".git"))
+        self.assertEqual(self.git(self.store, "ls-files"), "")
+        self.assertEqual(self.git(self.store, "status", "--porcelain", "--untracked-files=all"), f"?? {stored.path}")
+        # The clone itself, the app repo, and `main` are as they were.
+        self.assertEqual(self.git(self.clone, "status", "--porcelain"), "")
+        self.assertEqual(self.git(self.clone, "symbolic-ref", "--short", "HEAD"), "main")
+        self.assertTrue(self.untouched(self.ios))
 
     def test_a_record_is_written_once_and_never_replaced(self):
         recordstore.write(self.repo, CLAIM)
@@ -68,7 +78,7 @@ class WriteTests(StoreCase):
         for name, record in (("a missing field", changed(CLAIM, machine=...)), ("an extra field", changed(CLAIM, transcript="x")), ("a newer schema", changed(CLAIM, schema="tug.claim/2"))):
             with self.subTest(name=name), self.assertRaises(DataError):
                 recordstore.write(self.repo, record)
-        self.assertFalse(self.store.exists())
+        self.assertEqual(self.files() if self.store.exists() else [], [])
 
     def test_a_crash_during_a_write_leaves_no_half_written_record(self):
         real_link = os.link
@@ -81,11 +91,13 @@ class WriteTests(StoreCase):
 
         # A crash so hard that nothing could be cleaned up: the process is gone after part of the text is on disk.
         folder = self.store / "github-projects/acme/shop-ios/311"
+        folder.mkdir(parents=True, exist_ok=True)
         half = folder / (recordstore.TEMPORARY_PREFIX + "abc123.tmp")
         half.write_text('{"schema": "tug.claim/1", "id": "2026', encoding="utf-8")
         listing = recordstore.read_all(self.repo)
         self.assertEqual((listing.records, listing.unreadable), ((), ()))  # a reader does not look at it
-        self.assertEqual(recordstore.unpublished(self.repo), ())
+        self.assertEqual(recordstore.unpublished(self.repo), ())  # Git does not see it either, so it can never be published
+        self.assertEqual(self.git(self.store, "status", "--porcelain", "--untracked-files=all"), "")
         self.assertIs(os.link, real_link)
         stored = recordstore.write(self.repo, CLAIM)  # the same record can be written after the crash
         self.assertEqual(recordstore.read_all(self.repo).records, (stored,))
@@ -166,17 +178,17 @@ class ReadTests(StoreCase):
     def test_a_link_is_not_followed(self):
         outside = self.tmp / "outside.json"
         outside.write_text(json.dumps(CLAIM), encoding="utf-8")
-        folder = self.store / "github-projects/acme/shop-ios/311"
+        folder = recordstore.ensure(self.repo) / "github-projects/acme/shop-ios/311"
         folder.mkdir(parents=True)
         (folder / "20261115T101530Z-3f9a1c2b7d4e.json").symlink_to(outside)
         listing = recordstore.read_all(self.repo)
         self.assertEqual(listing.records, ())
         self.assertEqual(listing.unreadable[0].reason, "it is not a plain file")
 
-    def test_a_store_that_is_not_there_reads_as_empty(self):
-        plain = self.app("plain", IOS_FILES, "acme/plain")
-        self.assertEqual(recordstore.read_all(plain), recordstore.Listing((), ()))
-        self.assertEqual(recordstore.unpublished(plain), ())
+    def test_a_store_that_is_not_there_reads_as_empty_and_is_not_made_by_reading(self):
+        self.assertEqual(recordstore.read_all(self.repo), recordstore.Listing((), ()))
+        self.assertEqual(recordstore.unpublished(self.repo), ())
+        self.assertFalse(self.store.exists())
 
     def test_a_very_large_store_is_read_up_to_a_limit_and_says_so(self):
         for index, suffix in enumerate("abc"):
@@ -192,6 +204,71 @@ class ReadTests(StoreCase):
         self.assertEqual(listing.records, tuple(made))
         self.assertEqual([records.kind_of(stored.record) for stored in listing.records], list(records.KINDS))
         self.assertEqual(recordstore.unpublished(self.repo), tuple(sorted(stored.path for stored in made)))
+
+
+class WorktreeTests(StoreCase):
+    def test_a_machine_that_never_synced_is_told_to_sync(self):
+        self.use_home("fresh")
+        with self.assertRaisesRegex(TugError, "has no copy of the team repo .* yet. Run `tug sync` first."):
+            recordstore.write(self.address, CLAIM)
+        self.assertFalse(paths.records_worktree(self.address).exists())
+
+    def test_published_and_unpublished_records_are_one_folder_and_git_tells_them_apart(self):
+        published = recordstore.write(self.repo, CLAIM)
+        self.git(self.store, "add", "--", published.path)
+        self.git(self.store, "commit", "--quiet", "-m", "records")  # what publishing will do
+        waiting = recordstore.write(self.repo, at(EVENT, "2026-11-15T10:15:31Z", "b"))
+        self.assertEqual(recordstore.read_all(self.repo).records, (published, waiting))
+        self.assertEqual(recordstore.unpublished(self.repo), (waiting.path,))
+
+    def test_the_branch_is_taken_from_github_when_it_is_there_already(self):
+        # Another machine published a record. This machine fetched the branch, and has no checkout of it yet.
+        seed = self.tmp / "seed"
+        self.git(self.tmp, "clone", "--quiet", os.fspath(self.remote), os.fspath(seed))
+        self.git(seed, "checkout", "--quiet", "--orphan", "records")
+        self.git(seed, "rm", "-rf", "--quiet", ".")
+        path = recordstore.record_path(CLAIM)
+        (seed / path).parent.mkdir(parents=True)
+        (seed / path).write_text(json.dumps(CLAIM), encoding="utf-8")
+        self.git(seed, "add", "-A")
+        self.git(seed, "commit", "--quiet", "-m", "a record from another machine")
+        self.git(seed, "push", "--quiet", "origin", "records")
+        self.git(self.clone, "fetch", "--quiet", "origin", "records:refs/remotes/origin/records")
+
+        listing = recordstore.read_all(self.repo)
+        self.assertEqual(listing.records, ())  # reading makes no checkout
+        mine = recordstore.write(self.repo, at(EVENT, "2026-11-15T10:15:31Z", "b"))
+        listing = recordstore.read_all(self.repo)
+        self.assertEqual([stored.record["id"] for stored in listing.records], [CLAIM["id"], mine.record["id"]])
+        self.assertEqual(recordstore.unpublished(self.repo), (mine.path,))
+        self.assertEqual(self.git(self.store, "rev-parse", "HEAD"), self.git(self.remote, "rev-parse", "records"))
+
+    def test_a_deleted_checkout_is_made_again_and_keeps_what_was_committed(self):
+        published = recordstore.write(self.repo, CLAIM)
+        self.git(self.store, "add", "--", published.path)
+        self.git(self.store, "commit", "--quiet", "-m", "records")
+        for current, _folders, _files in os.walk(self.store):
+            os.chmod(current, 0o700)
+        import shutil
+
+        shutil.rmtree(self.store)
+        again = recordstore.write(self.repo, at(EVENT, "2026-11-15T10:15:31Z", "b"))
+        self.assertEqual(recordstore.read_all(self.repo).records, (published, again))
+
+    def test_an_older_git_gets_the_same_empty_branch(self):
+        recordstore._add_empty_branch_old_git(self.clone, self.store)
+        self.assertEqual(self.git(self.store, "symbolic-ref", "--short", "HEAD"), "records")
+        self.assertEqual(self.files(), [])
+        stored = recordstore.write(self.repo, CLAIM)
+        self.assertEqual(recordstore.unpublished(self.repo), (stored.path,))
+        self.assertEqual(self.git(self.clone, "status", "--porcelain"), "")
+
+    def test_a_folder_of_something_else_in_the_way_is_left_alone(self):
+        self.store.mkdir(parents=True)
+        (self.store / "mine.txt").write_text("x", encoding="utf-8")
+        with self.assertRaisesRegex(TugError, "exists and is not the task records of acme/team. It was left as it is."):
+            recordstore.write(self.repo, CLAIM)
+        self.assertEqual((self.store / "mine.txt").read_text(encoding="utf-8"), "x")
 
 
 if __name__ == "__main__":

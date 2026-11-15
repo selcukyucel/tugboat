@@ -38,7 +38,7 @@ The other ways are on [uv's installation page](https://docs.astral.sh/uv/getting
 **2. Install Tugboat.**
 
 ```sh
-uv tool install git+https://github.com/selcukyucel/tugboat@v0.29.0
+uv tool install git+https://github.com/selcukyucel/tugboat@v0.30.0
 tug version
 ```
 
@@ -456,7 +456,7 @@ tug protected Signing/dist.p12 Sources/App.swift
 # Sources/App.swift: not protected.
 ```
 
-- **Tugboat's own files are always protected**: the copy of the team repo, its own state files and the task records under `.tugboat/`, the files it generated under `.claude/`, and `.claude/settings.local.json`. The draft folder `.tugboat/capture/` is not, because the capture skills write there.
+- **Tugboat's own files are always protected**: the copy of the team repo, its own state files under `.tugboat/`, the files it generated under `.claude/`, and `.claude/settings.local.json`. The draft folder `.tugboat/capture/` is not, because the capture skills write there.
 - **The rules in the settings file are Tugboat's own.** It records which rules it added and takes only those out again. A rule or an approval the developer wrote stays where it is.
 - **A rule names the full path on the machine.** Claude Code reads a short rule from the folder the session started in, which need not be the top of the repo.
 - **A broken list takes no protection away.** When the team repo's file cannot be read, the entries of the last good compile stay in force and the sync report says so.
@@ -483,11 +483,14 @@ Only tools that write files or run shell commands are checked. A read passes at 
 | Change a protected path with an edit tool | Asks the developer | Denied |
 | Change a protected path with a shell command that the check recognises | Asks the developer | Denied |
 | Force-push to a shared branch, delete one, or move one by force | Denied | Denied |
+| Change a file inside Tugboat's folder on the machine, `~/.tugboat/` | Asks the developer | Denied |
+| Run `tug remove`, which takes these checks out of the repo | Asks the developer | Denied |
 | Run `git reset --hard` while on a shared branch | Denied | Denied |
 | Anything else | Allowed | Allowed |
 
 - **A secret** is found with the same patterns the team repo check uses for notes. Only the text that is about to be written is read, not the file as it is. The answer names the kind of secret and the line, never the secret.
 - **A protected path** comes from the compiled list, `.tugboat/permissions.json`. So a path added in the team repo is checked after the next sync.
+- **Tugboat's folder on the machine**, `~/.tugboat/`, is guarded by its place, not by the list. It holds the clone of the team repo and the task records. A write or a recognised shell write to a path inside it is asked about on Claude Code and denied on Copilot. Reading it is allowed.
 - **A shared branch** is the repo's default branch from the project profile, `main`, `master`, `develop`, and any `release/...` branch. A force push to a developer's own branch is allowed.
 - **Shell commands that are recognised as writes**: a redirect (`>`, `>>`), `tee`, `rm`, `rmdir`, `mv`, `cp` and `ln` (the destination), `touch`, `mkdir`, `chmod`, `chown`, `truncate`, `dd of=`, `sed -i`, `perl -i`, and `git rm`, `git mv`, `git clean`, `git restore`, `git checkout`, `git apply` with paths. Reading a protected file, or running a tool such as `fastlane`, is not a change.
 - **Every answer says why**, and what the developer can do.
@@ -590,7 +593,7 @@ The other two optional CI checks, the guardrail pack and dependency verification
 
 ## Task records
 
-The shared task history will be a set of small JSON files, one per record, written once and never edited. This version defines and checks their formats, and has the local store they are written to first. No command makes a record yet, and nothing publishes one: that comes with the next tasks.
+The shared task history will be a set of small JSON files, one per record, written once and never edited. This version defines and checks their formats, and has the store they are written to. No command makes a record yet, and nothing publishes one: that comes with the next tasks.
 
 | Record | Schema | Holds |
 |---|---|---|
@@ -614,22 +617,29 @@ Every record carries its own ID, its time in UTC, the tool version that wrote it
 
 Until records are published, these formats can still change without a new schema number.
 
-### The local store
+### Where records live
 
-A record is written inside the app repo first, in `.tugboat/records/`, and published later, after the developer confirms.
+Records live in the team repo, on one branch named `records`, and nowhere else. On a machine that branch is checked out as a Git worktree beside the clone of the team repo:
 
 ```
-.tugboat/records/jira/SHOP-123/20261115T101530Z-3f9a1c2b7d4e.json
-.tugboat/records/github-projects/acme/shop-ios/311/20261115T101530Z-3f9a1c2b7d4e.json
+~/.tugboat/records/github.com/<owner>/<team repo>/
+    jira/SHOP-123/20261115T101530Z-3f9a1c2b7d4e.json
+    github-projects/acme/shop-ios/311/20261115T101530Z-3f9a1c2b7d4e.json
 ```
 
-- **The local format is the published one:** the same JSON file, at the path it will have on the `records` branch of the team repo. One validator serves both, and publishing is a copy. A small database was the other option; it would need a conversion and a second way to check a record.
+- **A record is written straight into that folder.** Until the developer confirms a checkpoint it is a file that Git has not committed: that is what "unpublished" means. Publishing commits and pushes the same file.
+- **There is one copy of a record on a machine.** Nothing about a record is written into an app repo, so no copy there can go stale. There is nothing to remove after publishing.
+- **One branch for everyone.** There is no branch for each developer. Each record names its author, its machine, and its time.
+- **Every app repo, clone, and task worktree on the machine shares the folder**, when they belong to the same team repo.
 - **Every record of a story is in one folder**, whichever app repo it is about. The record itself names the repo.
 - **A record is written once.** A second write to the same path is refused, and the file is read-only.
-- **A write is atomic.** The record is written to a temporary file beside its place, flushed to disk, and then given its name in one step. A crash leaves either no record or the whole record. A temporary file that a crash left behind is ignored by every reader and cleared by a later write, once it is an hour old.
+- **A write is atomic.** The record is written to a temporary file beside its place, flushed to disk, and then given its name in one step. A crash leaves either no record or the whole record. Git never sees a temporary file, so one can never be published. A later write clears one that is an hour old.
 - **A reader never guesses.** A file that is not valid JSON, fails its schema, comes from a newer tool, or is not at the path its own content gives is reported and left out.
-- **Git ignores the store, and an agent's edit tools are kept away from it.** `.tugboat/records/**` is one of Tugboat's protected paths.
-- **`tug remove` asks before it deletes the store.** See "Remove Tugboat".
+- **The branch starts on the first machine that writes a record**, empty and with no history in common with `main`. It reaches GitHub with the first publish. A machine that already fetched the branch checks that out.
+- **An agent's edit tools are kept out of Tugboat's whole folder on the machine**, `~/.tugboat/`. See "The check before each action".
+- **`tug remove` asks before it deletes a clone whose records were not all published.** See "Remove Tugboat".
+
+Why not a small database: it would need a conversion before each check and before each publish, a second way to read a record, and locking for two writers. The files need none of that, and a person can read them.
 
 ## Proposing a change to the team repo
 
@@ -905,17 +915,18 @@ tug remove
 It works in this order:
 
 1. **It lists what it will remove and what it will leave.** Nothing is removed until you answer `y`.
-2. **It asks about what was not shared yet.** `.tugboat/capture/` can hold notes and decision records that an agent drafted and nobody proposed. `.tugboat/records/` can hold task records that were not published. You choose: keep them (they are moved to `~/.tugboat/kept/`), delete them, or stop. `tug capture propose` and `tug decision propose` send drafts to the team repo. Publishing task records is not built yet.
+2. **It asks about drafts.** `.tugboat/capture/` can hold notes and decision records that an agent drafted and nobody proposed yet. You choose: keep them (they are moved to `~/.tugboat/kept/`), delete them, or stop and propose them first with `tug capture propose` and `tug decision propose`.
 3. **It removes.** The hooks go first.
 4. **It offers a pull request** in the team repo that takes the app repo out of the project profile. Say yes only when the whole team stops using Tugboat in that repo. Without it, nothing in the team repo changes.
-5. **It offers to delete the clone of the team repo**, when no app repo on this machine uses it any more.
+5. **It offers to delete the clone of the team repo**, when no app repo on this machine uses it any more. The task records are checked out beside the clone and go with it. When some were not published yet, it says how many and asks: keep them (moved to `~/.tugboat/kept/`), delete them, or keep the clone.
 6. **It prints the command that uninstalls the tool**, when no app repo on this machine is set up any more. Tugboat does not uninstall itself.
 
 | What | What `tug remove` does |
 |---|---|
 | Tugboat's hooks and permission rules in `.claude/settings.local.json` | Takes them out. Settings of your own stay. The file is deleted when it holds nothing else. |
 | The generated files under `.claude/` | Deletes them, also one that was edited after Tugboat wrote it. A file that Git tracks now is left. |
-| The folder `.tugboat/` | Deletes it, after the question about drafts and unpublished task records. |
+| The folder `.tugboat/` | Deletes it, after the question about drafts. |
+| Task records | Not in the app repo, so removing Tugboat from a repo does not touch them. They are asked about when the clone of the team repo is deleted. |
 | Tugboat's block in the repo's local Git exclude file | Takes it out. Every other line stays. |
 | `.github/workflows/tugboat-secret-scan.yml` | Deletes it only while it is exactly what Tugboat wrote and nobody committed it. A committed one belongs to the repo: a pull request there removes it. |
 | The team repo, and pull requests that were opened | Left as they are. |
@@ -923,7 +934,7 @@ It works in this order:
 Good to know:
 
 - **Without a terminal it only lists.** `tug remove` then prints the list and removes nothing. `--yes` removes without the question.
-- **With `--yes`, each offer needs its own option.** `--unpublished keep` or `--unpublished delete`, `--profile-pr`, `--delete-clone`. A repo that holds drafts or unpublished task records is not touched until `--unpublished` says what to do with them. `--drafts` is the older name of that option and still works.
+- **With `--yes`, each offer needs its own option.** `--unpublished keep` or `--unpublished delete`, `--profile-pr`, `--delete-clone`. A repo that holds drafts is not touched, and a clone that holds unpublished task records is not deleted, until `--unpublished` says what to do with them. `--drafts` is the older name of that option and still works.
 - **`tug remove --all` does the same for every app repo on this machine**, one after the other. A `n` skips that repo and goes on to the next.
 - **The list of app repos is in `~/.tugboat/app-repos.json`.** Init and sync write it. A repo that a tug older than 0.28.0 set up joins the list at its next sync.
 - **Git may show a file again.** When `.claude/settings.local.json` keeps settings of your own, Tugboat's exclude block no longer hides it. The command says so.
@@ -935,10 +946,10 @@ After the last repo, the tool and its folder are yours to remove:
 
 ```sh
 uv tool uninstall tugboat   # the command
-rm -rf ~/.tugboat           # kept clones, kept drafts and records, and Tugboat's state
+rm -rf ~/.tugboat           # the clones, the task records, what you kept, and Tugboat's state
 ```
 
-`~/.tugboat/pending/` holds profile changes that this machine proposed and nobody merged yet. They are lost with the folder. The pull requests themselves stay in GitHub.
+`~/.tugboat/pending/` holds profile changes that this machine proposed and nobody merged yet. `~/.tugboat/records/` holds the task records, and those that were not published exist nowhere else. Both are lost with the folder. What is in GitHub stays.
 
 ### By hand, when `tug` is missing
 
@@ -959,7 +970,7 @@ sed -n '/^# >>> tugboat/,/^# <<< tugboat/p' "$(git rev-parse --git-path info/exc
 ```
 
 - Delete each file and folder it names, apart from `.claude/settings.local.json` when you kept that file in step 1.
-- `.tugboat/capture/` holds notes and decision records an agent drafted and nobody proposed yet. `.tugboat/records/` holds task records that were not published. Look there first.
+- `.tugboat/capture/` holds notes and decision records an agent drafted and nobody proposed yet. Look there first.
 
 **3. Delete that block from the exclude file**, from the line `# >>> tugboat` to the line `# <<< tugboat`.
 

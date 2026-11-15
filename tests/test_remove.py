@@ -210,7 +210,7 @@ class DraftTests(RemoveCase):
     def test_with_yes_the_drafts_need_their_own_answer(self):
         code, out, err = self.remove(self.ios, "--yes")
         self.assertEqual(code, 1)
-        self.assertIn("holds drafts that nobody shared yet. Pass --unpublished keep or --unpublished delete. Nothing was removed.", err)
+        self.assertIn("holds drafts that nobody proposed yet. Pass --unpublished keep or --unpublished delete. Nothing was removed.", err)
         self.assertIn("1 file in .tugboat/capture/ is a draft that nobody proposed yet: knowledge/auth/token-refresh.md", out)
         self.assertTrue(self.note.is_file())
         self.assertTrue(self.set_up(self.ios))
@@ -239,39 +239,63 @@ class DraftTests(RemoveCase):
 
 
 class UnpublishedRecordTests(RemoveCase):
+    """Task records live beside the team repo clone, so they are asked about when the clone goes."""
+
     def setUp(self):
         super().setUp()
-        self.claim = recordstore.write(self.ios, CLAIM)
-        self.event = recordstore.write(self.ios, changed(EVENT, id="20261115T101600Z-aaaaaaaaaaaa", at="2026-11-15T10:16:00Z"))
+        self.claim = recordstore.write(self.address, CLAIM)
+        self.event = recordstore.write(self.address, changed(EVENT, id="20261115T101600Z-aaaaaaaaaaaa", at="2026-11-15T10:16:00Z"))
+        self.clone = paths.team_repo_clone(self.address)
+        self.store = paths.records_worktree(self.address)
 
-    def test_records_that_were_not_published_need_their_own_answer(self):
-        code, out, err = self.remove(self.ios, "--yes")
-        self.assertEqual(code, 1)
-        self.assertIn("holds task records that nobody shared yet. Pass --unpublished keep or --unpublished delete. Nothing was removed.", err)
-        self.assertIn("2 task records in .tugboat/records/ were not published yet: github-projects/acme/shop-ios/311/", out)
-        self.assertEqual(len(recordstore.read_all(self.ios).records), 2)
-        self.assertTrue(self.set_up(self.ios))
+    def test_removing_tugboat_from_a_repo_does_not_touch_the_records(self):
+        out = self.removed(self.ios, "--yes")
+        self.assertTrue(self.untouched(self.ios))
+        self.assertNotIn("task record", out)  # the Android repo still uses the clone, so nothing is asked
+        self.assertEqual(recordstore.read_all(self.address).records, (self.claim, self.event))
 
-    def test_a_person_is_asked_and_told_that_publishing_is_not_built(self):
-        code, out, err = self.remove(self.ios, answers=["3"])
-        self.assertEqual((code, err), (1, "tug: stopped. Nothing was removed.\n"))
-        self.assertIn("What should happen to the task records?", out)
-        self.assertIn("Publishing task records is not built yet.", out)
-        self.assertNotIn("tug capture propose", out)
-        self.assertEqual(len(recordstore.read_all(self.ios).records), 2)
+    def test_the_clone_is_kept_until_the_records_have_an_answer(self):
+        out = self.removed(self.tmp, "--all", "--yes", "--delete-clone")
+        self.assertIn(f"Its task records are at {self.store}. 2 of them were not published yet, and would be lost with the clone: github-projects/acme/shop-ios/311/", out)
+        self.assertIn("The clone was kept, because it holds task records that were not published. With --delete-clone, pass --unpublished keep or --unpublished delete.", out)
+        self.assertTrue((self.clone / ".git").exists())
+        self.assertEqual(len(recordstore.read_all(self.address).records), 2)
 
-    def test_kept_records_are_moved_out_of_the_repo_as_they_are(self):
-        out = self.removed(self.ios, "--yes", "--unpublished", "keep")
+    def test_kept_records_are_moved_out_as_they_are_before_the_clone_goes(self):
+        out = self.removed(self.tmp, "--all", "--yes", "--delete-clone", "--unpublished", "keep")
         (kept,) = paths.kept_folder().iterdir()
+        self.assertTrue(kept.name.startswith("team-records-"))
         self.assertIn(f"Moved 2 task records to {kept}.", out)
         for stored in (self.claim, self.event):
-            self.assertEqual(json.loads((kept / "records" / stored.path).read_text(encoding="utf-8")), stored.record)
-        self.assertTrue(self.untouched(self.ios))
+            self.assertEqual(json.loads((kept / stored.path).read_text(encoding="utf-8")), stored.record)
+        self.assertIn("The clone was deleted. Nothing in GitHub changed.", out)
+        self.assertFalse(self.clone.exists())
+        self.assertFalse(self.store.exists())
+        self.assertFalse((paths.tug_home() / "records").exists())
 
-    def test_deleted_records_go_with_the_folder(self):
-        self.removed(self.ios, "--yes", "--unpublished", "delete")
-        self.assertTrue(self.untouched(self.ios))
+    def test_deleted_records_go_with_the_clone(self):
+        self.removed(self.tmp, "--all", "--yes", "--delete-clone", "--unpublished", "delete")
+        self.assertFalse(self.clone.exists())
+        self.assertFalse(self.store.exists())
         self.assertFalse(paths.kept_folder().exists())
+
+    def test_a_person_is_asked_and_can_keep_the_clone(self):
+        self.removed(self.android, "--yes")
+        out = self.removed(self.ios, answers=["y", "n", "y", "3"])
+        self.assertEqual(self.questions[2], "Delete this clone? [y/N] ")
+        self.assertIn("What should happen to the task records that were not published?", out)
+        self.assertIn("Publishing task records is not built yet.", out)
+        self.assertIn("The clone was kept, because it holds task records that were not published.", out)
+        self.assertTrue((self.clone / ".git").exists())
+        self.assertEqual(len(recordstore.read_all(self.address).records), 2)
+
+    def test_published_records_do_not_hold_the_clone_back(self):
+        self.git(self.store, "add", "-A")
+        self.git(self.store, "commit", "--quiet", "-m", "records")
+        out = self.removed(self.tmp, "--all", "--yes", "--delete-clone")
+        self.assertNotIn("not published yet", out)
+        self.assertFalse(self.clone.exists())
+        self.assertFalse(self.store.exists())
 
 
 class TeamRepoTests(RemoveCase):

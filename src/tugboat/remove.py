@@ -3,14 +3,15 @@
 The order matters, as it does for init, in reverse:
 
 1. Read what Tugboat left in the repo, and list it.
-2. Ask what to do with drafts nobody proposed yet and with task records that
-   were not published. Wait for a confirmation.
+2. Ask what to do with drafts nobody proposed yet. Wait for a confirmation.
 3. Take the hooks out first. A hook that stays while the rest goes would
    call a tool that no longer knows the repo.
 4. Delete the generated files, the folder `.tugboat/`, and Tugboat's block
    in the local Git exclude file.
 5. Offer the pull request that takes the repo out of the project profile,
-   and offer to delete a team repo clone that no repo uses any more.
+   and offer to delete a team repo clone that no repo uses any more. Task
+   records live with that clone, not in an app repo, so the ones that were
+   not published are asked about here.
 
 Removal deletes only what init and sync generated. A file that Git tracks
 is never changed: it is named, and left. Nothing in GitHub changes unless
@@ -48,7 +49,7 @@ CALLER_REMOVE, CALLER_COMMITTED, CALLER_CHANGED = "remove", "committed", "change
 class Options(NamedTuple):
     yes: bool = False
     everything: bool = False  # every app repo on this machine
-    unpublished: str | None = None  # KEEP or DELETE, for drafts nobody proposed yet and records not published yet
+    unpublished: str | None = None  # KEEP or DELETE, for drafts nobody proposed yet, and for records not published yet
     profile_pr: bool = False  # open the pull request that takes the repo out of the profile
     delete_clone: bool = False  # delete a team repo clone that no repo uses any more
 
@@ -69,11 +70,6 @@ class Plan(NamedTuple):
     excludes: tuple[str, ...]  # the lines of Tugboat's block in the local exclude file
     caller: str  # "", or one of the CALLER_ values
     drafts: tuple[str, ...]  # drafts nobody proposed yet, from `.tugboat/capture/`
-    records: tuple[str, ...] = ()  # task records that were not published yet, from `.tugboat/records/`
-
-    @property
-    def unpublished(self) -> bool:
-        return bool(self.drafts or self.records)
 
     @property
     def anything(self) -> bool:
@@ -185,7 +181,6 @@ def read_plan(repo: Path) -> Plan:
         excludes=tuple(excludes),
         caller=_caller(repo, address),
         drafts=_drafts(repo),
-        records=recordstore.unpublished(repo),
     )
 
 
@@ -252,8 +247,6 @@ def render_plan(found: Plan) -> str:
     lines.extend(left)
     if found.drafts:
         lines.append(f"{_count(len(found.drafts), 'file')} in {apprepo.LOCAL_FOLDER}/{CAPTURE}/ {'is a draft' if len(found.drafts) == 1 else 'are drafts'} that nobody proposed yet: {_named(found.drafts)}")
-    if found.records:
-        lines.append(f"{_count(len(found.records), 'task record')} in {recordstore.STORE}/ {'was' if len(found.records) == 1 else 'were'} not published yet: {_named(found.records)}")
     return "\n".join(lines)
 
 
@@ -294,20 +287,24 @@ def _holds_nothing(file: Path) -> bool:
         return False
 
 
-def _keep_unpublished(repo: Path, now: datetime | None = None) -> Path:
-    """Move the drafts and the unpublished records out of the repo, into a folder of their own."""
+def _kept_target(name: str, now: datetime | None = None) -> Path:
+    """A new folder of its own under Tugboat's folder for what a developer chose to keep."""
     stamp = (now or datetime.now(timezone.utc)).strftime("%Y%m%d-%H%M%S")
     holder = paths.kept_folder()
     holder.mkdir(parents=True, exist_ok=True)
-    target, count = holder / f"{repo.name}-{stamp}", 1
+    target, count = holder / f"{name}-{stamp}", 1
     while target.exists():
         count += 1
-        target = holder / f"{repo.name}-{stamp}-{count}"
+        target = holder / f"{name}-{stamp}-{count}"
     target.mkdir()
+    return target
+
+
+def _keep_drafts(repo: Path) -> Path:
+    """Move the drafts out of the repo."""
+    target = _kept_target(repo.name)
     local = apprepo.local_folder(repo)
-    for name in (CAPTURE, recordstore.FOLDER):
-        if (local / name).is_dir() and not (local / name).is_symlink():
-            shutil.move(os.fspath(local / name), os.fspath(target / name))
+    shutil.move(os.fspath(local / CAPTURE), os.fspath(target / CAPTURE))
     state = local / CAPTURE_STATE
     if state.is_file() and not state.is_symlink():
         shutil.move(os.fspath(state), os.fspath(target / CAPTURE_STATE))
@@ -363,11 +360,9 @@ def execute(found: Plan, unpublished: str | None = None) -> Result:
     kept: Path | None = None
     local = apprepo.local_folder(repo)
     try:
-        if found.unpublished and unpublished == KEEP:
-            kept = _keep_unpublished(repo)
-            parts = [_count(len(found.drafts), "draft file")] if found.drafts else []
-            parts += [_count(len(found.records), "task record")] if found.records else []
-            done.append(f"moved {' and '.join(parts)} to {kept}")
+        if found.drafts and unpublished == KEEP:
+            kept = _keep_drafts(repo)
+            done.append(f"moved {_count(len(found.drafts), 'draft file')} to {kept}")
         if found.local_folder:
             _delete_tree(local)
             done.append(f"deleted the folder {apprepo.LOCAL_FOLDER}/")
@@ -401,37 +396,26 @@ def render_result(found: Plan, result: Result) -> str:
         lines.append("A new agent session in this repo loads no Tugboat file, and no hook calls `tug`. A session that is open now may keep what it loaded, so start a new one.")
         lines.append("`tug init` sets the repo up again at any time.")
     if result.kept_drafts is not None:
-        lines.append(f"To use what was kept after a new `tug init`, move what is in {result.kept_drafts} back into {apprepo.LOCAL_FOLDER}/.")
+        lines.append(f"To use the kept drafts after a new `tug init`, move what is in {result.kept_drafts} back into {apprepo.LOCAL_FOLDER}/.")
     return "\n".join(lines)
 
 
 # ------------------------------------------------------------- the questions
 
 
-def _unpublished_words(found: Plan) -> str:
-    parts = ["drafts"] if found.drafts else []
-    parts += ["task records"] if found.records else []
-    return " and ".join(parts)
-
-
-def _unpublished_choice(found: Plan, options: Options) -> str | None:
-    """What to do with drafts and with records that were not published: KEEP, DELETE, or STOP. None when there are none."""
-    if not found.unpublished:
+def _drafts_choice(found: Plan, options: Options) -> str | None:
+    """What to do with drafts nobody proposed yet: KEEP, DELETE, or STOP. None when there are none."""
+    if not found.drafts:
         return None
     if options.unpublished is not None:
         return options.unpublished
-    stop = "Stop now, and remove nothing."
-    if found.drafts:
-        stop += " `tug capture propose` and `tug decision propose` send drafts to the team repo."
-    if found.records:
-        stop += " Publishing task records is not built yet."
     print()
     return prompts.one(
-        f"What should happen to the {_unpublished_words(found)}?",
+        "What should happen to the drafts?",
         (
             (KEEP, f"Keep them. They are moved to {paths.kept_folder()}/, outside the repo."),
             (DELETE, "Delete them with the folder."),
-            (STOP, stop),
+            (STOP, "Stop now, and remove nothing. `tug capture propose` and `tug decision propose` send drafts to the team repo."),
         ),
     )
 
@@ -528,21 +512,66 @@ def _offer_clone(address: TeamRepoAddress, options: Options) -> None:
     print("A repo that an older tug set up is not on the list until its next sync. If one still uses this clone, its next sync clones the team repo again.")
     for note in _clone_notes(address, clone):
         print(note)
+    store = recordstore.folder(address)
+    waiting = recordstore.unpublished(address)
+    if waiting:
+        print(f"Its task records are at {store}. {_count(len(waiting), 'of them was', 'of them were')} not published yet, and would be lost with the clone: {_named(waiting)}")
     if not _wants(options, options.delete_clone, "Delete this clone?"):
         print("The clone was kept. `tug remove --delete-clone`, or deleting the folder by hand, removes it.")
         return
+    if waiting:
+        choice = _records_choice(options)
+        if choice not in UNPUBLISHED_CHOICES:
+            print("The clone was kept, because it holds task records that were not published. With --delete-clone, pass --unpublished keep or --unpublished delete.")
+            return
+        if choice == KEEP:
+            try:
+                kept = _keep_records(address, waiting)
+            except OSError as error:
+                print(f"The task records could not be moved ({error.strerror or error}), so the clone was kept.")
+                return
+            print(f"Moved {_count(len(waiting), 'task record')} to {kept}.")
     try:
+        _delete_tree(store)
         _delete_tree(clone)
     except OSError as error:
         print(f"The clone could not be deleted ({error.strerror or error}).")
         return
-    for file in (paths.sync_state_file(address), paths.sync_lock_file(address), paths.pending_profile_file(address)):
+    for file in (paths.sync_state_file(address), paths.sync_lock_file(address), paths.records_lock_file(address), paths.pending_profile_file(address)):
         with contextlib.suppress(OSError):
             file.unlink()
-    for folder in (clone.parent, paths.sync_state_file(address).parent, paths.pending_profile_file(address).parent):
+    for folder in (clone.parent, store.parent, paths.sync_state_file(address).parent, paths.pending_profile_file(address).parent):
         with contextlib.suppress(OSError):
             _prune_empty(folder, paths.tug_home())
     print("The clone was deleted. Nothing in GitHub changed.")
+
+
+def _records_choice(options: Options) -> str | None:
+    """What to do with task records that were not published, before their clone is deleted."""
+    if options.unpublished is not None:
+        return options.unpublished
+    if options.yes or not prompts.interactive():
+        return None
+    print()
+    return prompts.one(
+        "What should happen to the task records that were not published?",
+        (
+            (KEEP, f"Keep them. They are moved to {paths.kept_folder()}/."),
+            (DELETE, "Delete them with the clone."),
+            (STOP, "Keep the clone. Publishing task records is not built yet."),
+        ),
+    )
+
+
+def _keep_records(address: TeamRepoAddress, waiting: tuple[str, ...]) -> Path:
+    """Move the unpublished record files out of the store, each at its own path."""
+    target = _kept_target(f"{address.name}-records")
+    store = recordstore.folder(address)
+    for relative in waiting:
+        destination = target / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(os.fspath(store / relative), os.fspath(destination))
+    return target
 
 
 def _closing() -> str:
@@ -617,10 +646,10 @@ def run(start: str | os.PathLike[str], options: Options) -> int:
             print()
         raise TugError(f"removal needs a person to confirm it. Run it in a terminal, or pass --yes. {NOTHING}")
     if options.yes and options.unpublished is None:
-        holding = [found for found in waiting if found.unpublished]
+        holding = [found for found in waiting if found.drafts]
         if holding:
             print(render_plan(holding[0]))
-            raise TugError(f"{holding[0].repo} holds {_unpublished_words(holding[0])} that nobody shared yet. Pass --unpublished keep or --unpublished delete. {NOTHING}")
+            raise TugError(f"{holding[0].repo} holds drafts that nobody proposed yet. Pass --unpublished keep or --unpublished delete. {NOTHING}")
 
     removed: list[Plan] = []
     failed = False
@@ -628,7 +657,7 @@ def run(start: str | os.PathLike[str], options: Options) -> int:
         if index:
             print()
         print(render_plan(found))
-        choice = _unpublished_choice(found, options)
+        choice = _drafts_choice(found, options)
         if choice != STOP and not options.yes:
             print()
         if choice == STOP or not (options.yes or prompts.confirm("Remove Tugboat from this repo?")):

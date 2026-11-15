@@ -217,6 +217,31 @@ class DecideTests(unittest.TestCase):
                 self.assertEqual(self.decide(tool, tool_input).action, "allow")
                 self.assertEqual(self.decide(tool, tool_input, claude=False).action, "allow")
 
+    def test_tugboats_folder_on_the_machine_is_asked_about_on_claude_code_and_denied_on_copilot(self):
+        home = "/Users/pat/.tugboat"
+        record = f"{home}/records/github.com/acme/team/jira/SHOP-123/20261115T101530Z-3f9a1c2b7d4e.json"
+        with mock.patch.dict(os.environ, {"TUG_HOME": home}):
+            for tool, tool_input in (
+                ("Write", {"file_path": record, "content": "{}"}),
+                ("Edit", {"file_path": f"{home}/team-repos/github.com/acme/team/policies/ios/IOS-001.md", "old_string": "a", "new_string": "b"}),
+                ("Bash", {"command": f"rm -rf {home}/records"}),
+                ("Bash", {"command": f"echo x > {record}"}),
+                ("Bash", {"command": f"rm -rf {home}"}),
+            ):
+                with self.subTest(tool=tool, tool_input=tool_input):
+                    asked = self.decide(tool, tool_input)
+                    self.assertEqual(asked.action, "ask")
+                    self.assertIn("inside Tugboat's own folder on this machine (/Users/pat/.tugboat)", asked.reason)
+                    self.assertEqual(self.decide(tool, tool_input, claude=False).action, "deny")
+            for tool, tool_input in (
+                ("Write", {"file_path": "/Users/pat/.tugboat-notes/x.md", "content": "x"}),
+                ("Write", {"file_path": "/Users/pat/elsewhere/x.md", "content": "x"}),
+                ("Bash", {"command": f"cat {record}"}),
+                ("Bash", {"command": "tug sync"}),
+            ):
+                with self.subTest(tool=tool, tool_input=tool_input):
+                    self.assertEqual(self.decide(tool, tool_input).action, "allow")
+
     def test_a_forbidden_git_command_is_denied_on_both(self):
         for claude in (True, False):
             decision = self.decide("Bash", {"command": "git push --force origin main"}, claude=claude)
@@ -283,7 +308,7 @@ class HookCommandTests(RuleCase):
         self.assertIn("Build settings hold keys and endpoints.", output["permissionDecisionReason"])
 
     def test_tugboats_own_files_are_guarded_and_the_draft_folder_is_free(self):
-        for path in (".tugboat/team/policies/ios/IOS-001.md", ".claude/rules/tugboat.md", ".claude/settings.local.json", ".tugboat/permissions.json", ".tugboat/records/jira/SHOP-123/20261115T101530Z-3f9a1c2b7d4e.json"):
+        for path in (".tugboat/team/policies/ios/IOS-001.md", ".claude/rules/tugboat.md", ".claude/settings.local.json", ".tugboat/permissions.json"):
             with self.subTest(path=path):
                 self.assertEqual(self.call(self.write(path, claude=False))[1]["permissionDecision"], "deny")
         self.assertIsNone(self.call(self.write(".tugboat/capture/knowledge/auth/token-refresh.md"))[1])

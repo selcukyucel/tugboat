@@ -42,7 +42,6 @@ TEAM, OWN = "team", "tugboat"
 OWN_PATHS: tuple[tuple[str, str], ...] = (
     (f"{COPY}/**", "The read-only copy of the team repo. Team content changes through a pull request in the team repo."),
     (f"{apprepo.LOCAL_FOLDER}/*.json", "Tugboat's own records for this repo. Only the `tug` command writes them."),
-    (f"{apprepo.LOCAL_FOLDER}/records/**", "Task records. Only the `tug` command writes them, and a record is never edited."),
 )
 GENERATED_REASON = "Tugboat generated this file. The next sync writes it again. Its content changes through the team repo."
 SETTINGS_REASON = "This file holds Tugboat's hooks and the protected path rules."

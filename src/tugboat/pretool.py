@@ -29,7 +29,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, NamedTuple
 
-from tugboat import globmatch, permissions, secretscan
+from tugboat import globmatch, paths, permissions, secretscan
 
 ALLOW, ASK, DENY = "allow", "ask", "deny"
 CLAUDE, COPILOT = "claude-code", "copilot"
@@ -118,16 +118,16 @@ def write_parts(tool_input: object) -> tuple[list[str], list[str]]:
         return files, ["\n".join(added)] if added else []
     if not isinstance(tool_input, dict):
         return [], []
-    paths = [tool_input[key] for key in _PATH_KEYS if isinstance(tool_input.get(key), str)]
+    targets = [tool_input[key] for key in _PATH_KEYS if isinstance(tool_input.get(key), str)]
     texts = []
     for key, value in tool_input.items():
         if isinstance(value, str) and "*** Begin Patch" in value:
             files, added = _patch_parts(value)  # a patch text inside a field: its files count, and only its added lines
-            paths.extend(files)
+            targets.extend(files)
             texts.append("\n".join(added))
         elif isinstance(key, str):
             texts.extend(_written_texts(value, key))
-    return paths, texts
+    return targets, texts
 
 
 def repo_relative(repo: Path, cwd: str, given: str) -> str | None:
@@ -141,6 +141,17 @@ def repo_relative(repo: Path, cwd: str, given: str) -> str | None:
             if candidate.startswith(base.rstrip("/") + "/"):
                 return candidate[len(base.rstrip("/")) + 1 :]
     return None
+
+
+def in_tug_home(cwd: str, given: str) -> bool:
+    """True for a path inside Tugboat's own folder on this machine, where the team repo clone and the task records are."""
+    absolute = os.path.normpath(os.path.join(cwd, os.path.expanduser(given)))
+    home = os.fspath(paths.tug_home())
+    for candidate in (absolute, os.path.realpath(absolute)):
+        for base in (os.path.normpath(home), os.path.realpath(home)):
+            if candidate == base or candidate.startswith(base.rstrip("/") + "/"):
+                return True
+    return False
 
 
 # ------------------------------------------------------------ shell commands
@@ -345,6 +356,16 @@ def _path_decision(surface: str, path: str, entry: permissions.Protected) -> Dec
     return Decision(DENY, f"{what} An agent may not change it here. Tell the developer, who can make the change themselves.")
 
 
+def _home_decision(surface: str, given: str) -> Decision:
+    what = (
+        f"Tugboat: `{given}` is inside Tugboat's own folder on this machine ({paths.tug_home()}). "
+        "It holds the team repo and the task records. Only the `tug` command writes there, and a record is never edited."
+    )
+    if surface == CLAUDE:
+        return Decision(ASK, f"{what} The developer decides whether the agent may change it.")
+    return Decision(DENY, f"{what} An agent may not change it. Tell the developer, who can make the change themselves.")
+
+
 def _secret_decision(findings: list[secretscan.Finding], where: str) -> Decision:
     return Decision(
         DENY,
@@ -371,13 +392,15 @@ def decide(
     tool_input = payload.get("tool_input")
 
     if kind == "write":
-        paths, texts = write_parts(tool_input)
+        written, texts = write_parts(tool_input)
         for text in texts:
             findings = secretscan.find(text)
             if findings:
                 return _secret_decision(findings, "the text to be written")
-        for given in paths:
+        for given in written:
             path = repo_relative(repo, cwd, given)
+            if path is None and in_tug_home(cwd, given):
+                return _home_decision(surface, given)
             entry = _protected(compiled, path) if path else None
             if entry is not None:
                 return _path_decision(surface, path or given, entry)
@@ -400,6 +423,8 @@ def decide(
     for given, removal in shell_writes(command):
         path = repo_relative(repo, cwd, given)
         if path is None:
+            if in_tug_home(cwd, given):
+                return _home_decision(surface, given)
             continue
         entry = _protected(compiled, path, removal)
         if entry is not None:

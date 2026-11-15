@@ -106,6 +106,9 @@ def _write_state(address: TeamRepoAddress, state: dict[str, Any]) -> None:
         raise
 
 
+hold_lock = _lock  # for the other things that must not run twice at once for one team repo
+
+
 def _is_clone(clone: Path) -> bool:
     return (clone / ".git").exists()
 
