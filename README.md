@@ -8,7 +8,7 @@ It runs beside Claude Code, GitHub Copilot CLI, and GitHub Copilot in VS Code. I
 
 ## Status
 
-Early. This version can start and check a team repo, set up an app repo with `tug init`, save the project's choices in the team repo, keep a read-only copy of the team content inside the app repo, and generate the files the agent tools load. It syncs at the start of each agent session. It checks each write and each shell command before the agent makes it.
+Early. This version can start and check a team repo, set up an app repo with `tug init`, save the project's choices in the team repo, keep a read-only copy of the team content inside the app repo, and generate the files the agent tools load. It syncs at the start of each agent session. It checks each write and each shell command before the agent makes it. It works out where the work on a task stopped from the task records on the machine, and shows that at the start of a session and with `tug status`.
 A command that is not written yet is listed and answers "not built yet". Nothing here is ready for daily use.
 
 ## Requirements
@@ -38,7 +38,7 @@ The other ways are on [uv's installation page](https://docs.astral.sh/uv/getting
 **2. Install Tugboat.**
 
 ```sh
-uv tool install git+https://github.com/selcukyucel/tugboat@v0.30.0
+uv tool install git+https://github.com/selcukyucel/tugboat@v0.31.0
 tug version
 ```
 
@@ -139,7 +139,7 @@ One machine can serve several projects. Each project's minimum is checked in tha
 | `tug capture status`, `accept`, `drop`, `propose` | Keeps the notes an agent drafted, records the developer's decision on each, and proposes the accepted ones in one pull request | Works. Not yet run in an agent session. |
 | `tug decision status`, `propose` | Lists the decision records an agent drafted, and proposes them as a pull request | Works. Not yet run in an agent session. |
 | `tug protected [path...]` | Says whether a file or folder in an app repo is a protected path, and why | Works |
-| `tug status` | Prints the session brief | Not built yet |
+| `tug status` | Prints the task brief: where the work on this repo's task stopped | Works. No command makes a task record yet, so it has only shown made-up records. |
 | `tug doctor` | Checks that this machine and this app repo are ready: what is configured on disk, and what was seen working in a session | Works |
 | `tug doctor observe` | The part of the setup check that an agent runs inside a session, through the skill `tug-setup-check` | Works |
 | `tug update` | Updates `tug` to the newest release | Works |
@@ -614,7 +614,7 @@ Every record carries its own ID, its time in UTC, the tool version that wrote it
 - **An event's results are the ones made at that step**, for that event's commit. The results a task has in all are worked out from its events.
 - **Never in a record:** the raw chat, and source code beyond file paths. No field exists for either, and text that reads like a chat transcript is refused.
 - **A record from a newer tool is skipped, not guessed at.** A schema number higher than this tool knows is reported as such.
-- **The check for secrets is a separate step** before a record is published. It is not built yet.
+- **The check for secrets is a separate step** before a record is published. See "The checks before a record is published".
 
 Until records are published, these formats can still change without a new schema number.
 
@@ -697,6 +697,48 @@ A report can be written as Markdown, for a comment on the story, or as one HTML 
 - **Passed, failed, blocked, and untested stay distinct.**
 
 A bare web address in a story's text still becomes a link where the reader's tool makes one, such as GitHub. It was in the tracker already. How GitHub and Jira show an escaped page is not yet tried: that comes with the task that posts a comment.
+
+### The task brief
+
+A new session knows nothing of the last one. The brief tells it where the work stopped, from the task records on the machine and from nothing else. The hook at the start of a session gives it to the agent after the sync report, and `tug status` prints the same text.
+
+```
+Tugboat task brief, worked out from the task records on this machine (15 November 2026, 12:00 UTC).
+
+Task: acme/shop-ios#311 - Show the delivery fee in the checkout total
+Epic: Checkout
+Link: https://github.com/acme/shop-ios/issues/311
+App repo: acme/shop-ios (ios)
+Step reached: analysis-done
+Last record: 15 November 2026, 10:23 UTC
+Branch and commit at that step: feat/checkout at 1f1f1f1f1f1f
+Checked out now: feat/checkout at 3c3c3c3c3c3c
+Team repo revision: 2a2a2a2a2a2a
+Held by: pat-dev on pats-macbook (this machine), since 15 November 2026, 10:01 UTC
+Next action: Show the findings to the developer.
+
+Results (1 current, 2 stale):
+- build: passed
+- analysis: stale, because the commit changed. It was "failed" for commit 1f1f1f1f1f1f
+- unit-tests: stale, because the commit changed. It was "failed" for commit 1f1f1f1f1f1f. 2 of 140 tests failed
+
+Records of this task in the last six months: 7. Not published yet: 0.
+
+How to use this brief:
+- It is a report. It starts no work. ...
+```
+
+- **Which task.** The tasks of this app repo that this machine holds, and a task whose last step was on the branch that is checked out now, whoever holds it. With several, the one on the checked-out branch is shown in full and the others get a line each.
+- **Another machine.** When another machine holds the task, the brief says so. When this machine does not hold it at all, the brief tells the agent to ask the developer before any work on it.
+- **Results.** Passed, failed, blocked, and untested stay distinct. A stale result leads with the word "stale" and its reason, and what it said comes after.
+- **What is compared.** The commit that is checked out and the team repo revision of the repo's copy. The story's acceptance criteria are not read from the tracker here, and the brief says so beside an acceptance result.
+- **The brief starts no work.** It tells the agent so in plain words: a greeting gets a short answer from the brief and nothing else. Making the brief writes nothing and reaches no network.
+- **Text from a record or from the tracker is data.** It is put on one line after its label, without control characters, and cut at a fixed length.
+- **Size.** The brief is at most 6,000 characters, and the whole text at session start is at most 9,000. What matters most is written first. When the sync report and the brief do not fit together, the sync report is cut.
+- **No records, no brief.** On a machine with no task records the hook adds nothing. With records and no task for this repo, the brief is one line.
+- **The machine's name** in a record is its host name without the network part. The variable `TUG_MACHINE` replaces it.
+
+Reading 10,000 records takes about 0.7 seconds on a developer Mac. That is every record of a busy team in six months.
 
 ## Proposing a change to the team repo
 

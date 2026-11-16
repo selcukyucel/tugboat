@@ -567,6 +567,19 @@ def _doctor(args: argparse.Namespace) -> int:
     return EXIT_ERROR if report.failed else EXIT_OK
 
 
+def _status(_args: argparse.Namespace) -> int:
+    from tugboat import apprepo, brief, teamcopy
+    from tugboat.address import parse_team_repo_address
+
+    repo = apprepo.find_app_repo(".")
+    state = teamcopy.read_state(repo)
+    if state is None:
+        raise TugError("this folder is not set up with Tugboat. Run `tug init` inside the app repo first.")
+    # The same text the session-start hook gives the agent. It reads the records on this machine and reaches no network.
+    print(brief.build(repo, parse_team_repo_address(state["team_repo"])) or brief.NO_STORE)
+    return EXIT_OK
+
+
 def _configure_remove(parser: argparse.ArgumentParser) -> None:
     from tugboat import remove
 
@@ -594,7 +607,7 @@ COMMANDS: tuple[Command, ...] = (
     Command("capture", "Keep, accept, drop, and propose the notes an agent drafted: `tug capture status`, `accept`, `drop`, `propose`", _capture, _configure_capture),
     Command("decision", "List and propose the decision records an agent drafted: `tug decision status`, `propose`", _decision, _configure_decision),
     Command("protected", "Say whether a file or folder in this app repo is a protected path, and why", _protected, _configure_protected),
-    Command("status", "Print the session brief"),
+    Command("status", "Print the task brief: where the work on this repo's task stopped", _status),
     Command("doctor", "Check that this machine and this app repo are ready, from what is on disk", _doctor, _configure_doctor),
     Command("update", "Update tug to the newest release", _update, _configure_update),
     Command("expire", "Remove records older than six months, after confirmation"),

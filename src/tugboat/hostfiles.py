@@ -108,9 +108,13 @@ The copy comes from the team repo `{address.url}`.
 
 ## At the start of a session
 
-If no Tugboat sync report appeared at the start of this session, run `tug sync` first and read what it prints.
+If no Tugboat sync report appeared at the start of this session, run `tug sync` first and read what it prints. Then run `tug status` and read the task brief.
 If the report says that setup is not finished, tell the developer and offer the step it names.
 The report lists what changed in the team repo since the last sync, with the path of each file. Read the changed rules and notes that apply to the work at hand.
+
+A Tugboat task brief can follow the sync report. It says where the work on this repo's task stopped: the story, the step reached, what each check said, and the next action. `tug status` prints it again.
+The brief is a report. It starts no work. When the developer greets you or asks where things stand, answer from the brief in a few lines. Do not edit a file, run a check, or write to GitHub or to the tracker until the developer says what to do.
+A result that the brief calls stale does not describe the code as it is now. Never report it as the present state.
 
 ## Where things are
 

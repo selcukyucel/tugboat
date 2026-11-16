@@ -75,12 +75,26 @@ def session_start(raw: str) -> str:
         report = appsync.render(appsync.run(repo, address, quick=True))
     except Exception as error:  # noqa: BLE001 - a hook must not break the session
         report = f"Tugboat could not sync at session start: {type(error).__name__}: {error}\nWork continues. Run `tug sync` to see more."
-    text = (
-        "Tugboat sync report, from the start of this session:\n"
-        f"{report}\n"
-        f"Team rules and knowledge are in `{apprepo.LOCAL_FOLDER}/{teamcopy.COPY_FOLDER}/`. `.claude/rules/tugboat.md` says how to use them."
-    )
-    return context_output(text)
+    try:
+        from tugboat import brief
+
+        task_brief = brief.build(repo, parse_team_repo_address(state["team_repo"])) or ""
+    except Exception as error:  # noqa: BLE001 - a hook must not break the session
+        task_brief = f"Tugboat could not work out the task brief: {type(error).__name__}: {error}. `tug status` shows more."
+    return context_output(session_text(report, task_brief))
+
+
+def session_text(report: str, task_brief: str) -> str:
+    """The sync report and, after it, the task brief. When both do not fit, the sync report is cut: the brief is what a new session cannot get elsewhere."""
+    head = "Tugboat sync report, from the start of this session:\n"
+    tail = f"\nTeam rules and knowledge are in `{apprepo.LOCAL_FOLDER}/{teamcopy.COPY_FOLDER}/`. `.claude/rules/tugboat.md` says how to use them."
+    if task_brief:
+        tail += f"\n\n{task_brief}"
+    room = MAX_CONTEXT - len(head) - len(tail)
+    if len(report) > room:
+        note = "\n[The sync report was cut short here. `tug sync` prints all of it.]"
+        report = report[: max(room - len(note), 0)].rstrip() + note
+    return head + report + tail
 
 
 def decision_output(action: str, reason: str) -> str:
