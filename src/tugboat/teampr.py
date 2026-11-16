@@ -18,7 +18,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import NamedTuple
 
-from tugboat import paths, sync, team_repo, teamcopy
+from tugboat import paths, signing, sync, team_repo, teamcopy
 from tugboat.address import TeamRepoAddress
 from tugboat.errors import TugError
 from tugboat.gitrun import GitError, git, run_process
@@ -27,7 +27,7 @@ from tugboat.version import installed_version
 
 BRANCH_PREFIX = "tug/"
 # The parts of a team repo that a proposal may change. CI workflows are not among them.
-PROPOSABLE = tuple(name for name in teamcopy.COPIED if name != "tugboat.json")
+PROPOSABLE = (*(name for name in teamcopy.COPIED if name != "tugboat.json"), signing.SIGNERS_FILE)
 MAX_FILES = 200
 MAX_FILE_BYTES = 512 * 1024
 MAX_BODY = 20_000
@@ -177,12 +177,17 @@ def propose(
         if not staged:
             raise TugError("the team repo already has exactly this content, so there is nothing to propose")
         message = f"{title}\n\n{body}\n" if body else f"{title}\n"
+        # Signed when this machine has a signing key for the team repo. GitHub then shows the proposal as verified, and a
+        # team repo that requires signed commits can merge it in any way.
+        signed = signing.machine_setup(clone).key is not None
         try:
             # Git must not make up a name from the machine's user and host name.
-            git("-c", "user.useConfigOnly=true", "commit", "--quiet", "-m", message, cwd=tree)
+            git("-c", "user.useConfigOnly=true", "commit", "--quiet", *(["-S"] if signed else []), "-m", message, cwd=tree, timeout=signing.SIGN_TIMEOUT)
         except GitError as error:
             if any(sign in error.reason for sign in ("auto-detection", "no email was given", "no name was given", "identity")):
                 raise TugError("Git does not know your name and email, so it cannot commit. Set them with `git config --global user.name` and `user.email`.") from error
+            if signed:
+                raise TugError(f"Git could not sign the commit with the key set for the team repo, so nothing was proposed ({error.reason}). `tug signing check` shows more.") from error
             raise
         commit = git("rev-parse", "HEAD", cwd=tree)
         # The full names of both ends, and a lease that expects no such branch:

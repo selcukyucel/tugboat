@@ -34,6 +34,11 @@ def records_lock_file(address: TeamRepoAddress) -> Path:
     return _sync_file(address, ".records.lock")
 
 
+def signing_check_file(address: TeamRepoAddress) -> Path:
+    """What the last `tug signing check` saw in GitHub, for the setup check, which reaches no network."""
+    return _sync_file(address, ".signing.json")
+
+
 def sync_state_file(address: TeamRepoAddress) -> Path:
     return _sync_file(address, ".json")
 

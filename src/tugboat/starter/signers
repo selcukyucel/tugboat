@@ -1,0 +1,11 @@
+# The team's public signing keys, one line for each key.
+#
+#   <GitHub account> namespaces="git" <key type> <public key>
+#
+# Tugboat checks the signature of every task record against this file, so that a
+# record proves which account wrote it. Git reads the same file: its format is
+# the one of Git's "allowed signers" for SSH signatures.
+#
+# A key gets in or out by pull request. `tug signing propose` opens the pull
+# request for the key of the machine it is run on. To retire a key and keep the
+# records it signed, add valid-before="YYYYMMDD" to its line; do not delete it.

@@ -567,6 +567,113 @@ def _doctor(args: argparse.Namespace) -> int:
     return EXIT_ERROR if report.failed else EXIT_OK
 
 
+def _configure_signing(parser: argparse.ArgumentParser) -> None:
+    actions = parser.add_subparsers(dest="action", metavar="ACTION", required=True)
+    team = "the team repo's address. Not needed inside an app repo that is set up."
+    use = actions.add_parser("use", help="pick the SSH key this machine signs with, for the team repo only", description="Tell Git, inside Tugboat's clone of the team repo only, to sign with this SSH key. Your other repos keep their own signing. Tugboat reads the public key and never the private one.")
+    use.add_argument("key", metavar="PUBLIC_KEY_FILE", help="the public key of an SSH key you have, such as ~/.ssh/id_ed25519.pub")
+    use.add_argument("--team-repo", metavar="ADDRESS", help=team)
+    propose = actions.add_parser("propose", help="open the pull request that adds this machine's key to the team repo", description="Open a pull request in the team repo that adds this machine's public signing key to the `signers` file, beside your GitHub account. A person merges it.")
+    propose.add_argument("--login", metavar="ACCOUNT", help="your GitHub account name. Asked from `gh` when not given.")
+    propose.add_argument("--team-repo", metavar="ADDRESS", help=team)
+    propose.add_argument("--yes", action="store_true", help="open the pull request without being asked")
+    check = actions.add_parser("check", help="sign a test commit, and ask GitHub whether signed commits are required", description="Sign one test commit and verify it against the team repo's `signers`. Then ask GitHub whether the team repo requires signed commits on `main` and `records`, and whether this key is a signing key of your account. `tug doctor` shows what this saw.")
+    check.add_argument("--team-repo", metavar="ADDRESS", help=team)
+
+
+def _signing(args: argparse.Namespace) -> int:
+    from tugboat import paths, signing, sync, teampr
+    from tugboat.errors import DataError
+    from tugboat.gitrun import GitError
+
+    address = _team_repo_of(args.team_repo)
+    clone = paths.team_repo_clone(address)
+    if args.action != "use":
+        report = sync.sync_team_repo(address)  # the newest list of keys
+        if not report.usable:
+            raise TugError(f"the team repo could not be reached ({report.error})")
+    if not (clone / ".git").exists():
+        raise TugError(f"this machine has no copy of the team repo {address.url} yet. Run `tug sync` first.")
+
+    if args.action == "use":
+        key = signing.use_key(clone, args.key)
+        print(f"Git now signs with this key inside Tugboat's clone of {address.slug}: {key.key_type}, from {args.key}.")
+        print("Nothing else on this machine changed. Your other repos keep their own signing.")
+        print("Next:")
+        print("1. Add the same public key to your GitHub account as a signing key: Settings, SSH and GPG keys, New SSH key, key type \"Signing Key\".")
+        print("2. Run `tug signing propose`. It opens the pull request that adds the key to the team repo.")
+        print("3. After the merge, run `tug signing check`.")
+        return EXIT_OK
+
+    setup = signing.machine_setup(clone)
+    if setup.key is None:
+        raise TugError(f"this machine has no signing key for the team repo: {setup.problem}. Pick one with `tug signing use ~/.ssh/<key>.pub`.")
+    try:
+        signers = signing.team_signers(clone) or []
+    except DataError as error:
+        raise TugError(f"the team repo's `{signing.SIGNERS_FILE}` file cannot be used: {error}") from error
+    program = signing.gh_program()
+
+    if args.action == "propose":
+        login = args.login
+        if not login and program:
+            try:
+                login = signing.run_process([program, "api", "user", "--jq", ".login"], action="gh", timeout=signing.GH_TIMEOUT).strip()
+            except GitError:
+                login = None
+        if not login:
+            raise TugError("which GitHub account is this key for? Pass --login ACCOUNT.")
+        content = signing.with_signer(signing.signers_text(clone), login, setup.key)
+        title = f"Add a signing key of {login}"
+        body = (
+            f"Adds one public SSH signing key ({setup.key.key_type}) for the GitHub account {login}.\n\n"
+            "Task records that this key signs will count as written by that account.\n\n"
+            f"Before you merge: check that the key is a signing key of the account. `gh api users/{login}/ssh_signing_keys` lists them, and the list is public."
+        )
+        if not args.yes:
+            print(f"This opens a pull request in {address.slug}: {title}")
+            print(f"  write  {signing.SIGNERS_FILE} (one more line: {login}, {setup.key.key_type})")
+            if not sys.stdin.isatty():
+                raise TugError("a pull request needs a person to confirm it. Run this in a terminal, or pass --yes. Nothing was proposed.")
+            if input("Open this pull request? [y/N] ").strip().lower() not in {"y", "yes"}:
+                raise TugError("stopped. Nothing was proposed.")
+        print(teampr.render(teampr.propose(address, title=title, body=body, changes={signing.SIGNERS_FILE: content.encode("utf-8")})))
+        return EXIT_OK
+
+    # check
+    failed = False
+    login = signing.login_of(signers, setup.key)
+    if login is None:
+        failed = True
+        print(f"Failed: this machine's key is not in the team repo's `{signing.SIGNERS_FILE}`. `tug signing propose` opens the pull request that adds it.")
+    else:
+        print(f"Passed: the team repo's `{signing.SIGNERS_FILE}` gives this machine's key to the GitHub account {login}.")
+    signed, sentence = signing.test_signature(clone)
+    worked = signed and login is not None
+    print(f"{'Passed' if worked else 'Failed'}: {sentence}.")
+    failed = failed or not worked
+    results: dict = {"login": login, "signature": worked, "branches": None, "account_key": None}
+    if not program:
+        print("Untested: the GitHub command-line tool `gh` is not installed, so GitHub was not asked.")
+    else:
+        try:
+            branches = signing.required_signatures(address, program)
+            results["branches"] = branches
+            for branch, required in branches.items():
+                print(f"{'Passed' if required else 'Failed'}: GitHub {'requires' if required else 'does not require'} signed commits on the branch '{branch}' of {address.slug}.")
+                failed = failed or not required
+            if login is not None:
+                has = signing.account_has_key(login, setup.key, program)
+                results["account_key"] = has
+                print(f"{'Passed' if has else 'Failed'}: the key {'is' if has else 'is not'} a signing key of the GitHub account {login}.")
+                failed = failed or not has
+        except (GitError, DataError) as error:
+            print(f"Untested: GitHub could not be asked ({getattr(error, 'reason', error)}).")
+    signing.save_check(address, setup.key, results)
+    print("`tug doctor` shows this result for 30 days.")
+    return EXIT_ERROR if failed else EXIT_OK
+
+
 def _status(_args: argparse.Namespace) -> int:
     from tugboat import apprepo, brief, teamcopy
     from tugboat.address import parse_team_repo_address
@@ -609,6 +716,7 @@ COMMANDS: tuple[Command, ...] = (
     Command("protected", "Say whether a file or folder in this app repo is a protected path, and why", _protected, _configure_protected),
     Command("status", "Print the task brief: where the work on this repo's task stopped", _status),
     Command("doctor", "Check that this machine and this app repo are ready, from what is on disk", _doctor, _configure_doctor),
+    Command("signing", "Set up signed commits for the team repo: `tug signing use`, `propose`, `check`", _signing, _configure_signing),
     Command("update", "Update tug to the newest release", _update, _configure_update),
     Command("expire", "Remove records older than six months, after confirmation"),
     Command("remove", "Take Tugboat out of this repo, or out of every repo on this machine", _remove, _configure_remove),

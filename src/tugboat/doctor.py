@@ -21,6 +21,7 @@ import re
 import shlex
 import shutil
 import subprocess
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, NamedTuple
 from urllib.parse import urlsplit
@@ -319,6 +320,61 @@ def check_clone(address: TeamRepoAddress) -> list[Check]:
     return checks
 
 
+def check_signing(address: TeamRepoAddress) -> list[Check]:
+    """Signed commits: this machine's key, the team repo's list of keys, and what the last `tug signing check` saw in GitHub."""
+    from tugboat import signing
+
+    clone = paths.team_repo_clone(address)
+    if not (clone / ".git").exists():
+        return []  # the check of the clone has said so already
+    try:
+        signers = signing.team_signers(clone)
+    except DataError as error:
+        return [Check(FAILED, f"The team repo's `{signing.SIGNERS_FILE}` file cannot be used: {error}.", "A pull request in the team repo repairs it. `tug team check` names the line.")]
+    if not signers:
+        # A team that has not started with signed records is not failed for it. The first key in the file starts it.
+        found = "has no" if signers is None else "lists no key in its"
+        text = f"The team repo {found} `{signing.SIGNERS_FILE}` file yet, so no task record can be published or verified."
+        return [Check(ADVISORY, text, "`tug signing use` picks this machine's key, and `tug signing propose` opens the pull request that adds it.")]
+    setup = signing.machine_setup(clone)
+    if setup.key is None:
+        return [Check(FAILED, f"This machine has no signing key for the team repo: {setup.problem}.", "Pick an SSH key you have and run `tug signing use ~/.ssh/<key>.pub`. Then run `tug signing propose`.")]
+    login = signing.login_of(signers, setup.key)
+    if login is None:
+        text = f"This machine's signing key ({setup.key.key_type}) is not in the team repo's `{signing.SIGNERS_FILE}`, so a record from this machine would not be verified."
+        return [Check(FAILED, text, "`tug signing propose` opens the pull request that adds it.")]
+    touch = " The key signs only after a touch." if setup.key.key_type in signing.TOUCH_KEY_TYPES else ""
+    checks = [Check(PASSED, f"This machine signs for the team repo with an SSH key ({setup.key.key_type}) that the team repo's `{signing.SIGNERS_FILE}` gives to the GitHub account {login}.{touch}")]
+    seen = signing.read_check(address)
+    fix = "Run `tug signing check`. It asks GitHub and signs one test commit."
+    if seen is None or seen.get("key") != setup.key.key:
+        return [*checks, Check(UNTESTED, "Whether GitHub requires signed commits on the team repo, and whether this key is a signing key of the account, was not checked on this machine.", fix)]
+    try:
+        checked = datetime.fromisoformat(seen["at"].replace("Z", "+00:00"))
+    except ValueError:
+        checked = None
+    if checked is None or (datetime.now(timezone.utc) - checked).days > STALE_DAYS:
+        return [*checks, Check(UNTESTED, f"Whether GitHub requires signed commits on the team repo was last checked more than {STALE_DAYS} days ago.", fix)]
+    day = seen["at"][:10]
+    branches = seen.get("branches") if isinstance(seen.get("branches"), dict) else None
+    if branches is None:
+        checks.append(Check(UNTESTED, f"On {day} GitHub could not be asked whether it requires signed commits on the team repo.", fix))
+    else:
+        off = [branch for branch in signing.BRANCHES if branches.get(branch) is not True]
+        if off:
+            where = " and ".join(f"'{branch}'" for branch in off)
+            checks.append(Check(FAILED, f"On {day} GitHub did not require signed commits on the team repo's branch {where}.", "A person turns it on in the team repo's settings in GitHub. The README says how. Then run `tug signing check` again."))
+        else:
+            checks.append(Check(PASSED, f"On {day} GitHub required signed commits on the team repo's branches {' and '.join(signing.BRANCHES)}."))
+    if seen.get("account_key") is False:
+        checks.append(Check(FAILED, f"On {day} this key was not a signing key of the GitHub account {login}, so GitHub would not show its commits as verified.", "Add the public key to the account in GitHub: Settings, SSH and GPG keys, New SSH key, key type \"Signing Key\"."))
+    elif seen.get("account_key") is True:
+        checks.append(Check(PASSED, f"On {day} this key was a signing key of the GitHub account {login}."))
+    if seen.get("signature") is False:
+        checks.append(Check(FAILED, f"On {day} a test commit could not be signed and verified with this key.", fix))
+    return checks
+
+
 def check_copy(repo: Path, address: TeamRepoAddress, state: dict[str, Any]) -> list[Check]:
     fix = "Run `tug sync` in this repo."
     if not teamcopy.copy_path(repo).is_dir():
@@ -572,6 +628,7 @@ def run(start: str | os.PathLike[str] = ".") -> Report:
     platform = entry["platform"] if entry else None
     checks += check_toolchain(repo, platform)
     checks += check_clone(address)
+    checks += check_signing(address)
     checks += check_copy(repo, address, state)
     checks += check_host_files(repo)
     checks += check_hooks(repo)

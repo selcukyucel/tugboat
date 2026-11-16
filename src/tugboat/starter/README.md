@@ -18,6 +18,7 @@ Nothing here is product code.
 | `estate/` | Apps, modules, owners, and environments | JSON |
 | `agents/` | Approved agent definitions | Markdown with a header |
 | `skills/` | Recipes for common work | One folder per skill, with a `SKILL.md` |
+| `signers` | The team's public signing keys, each beside its GitHub account. Task records are checked against it. | One line per key, in Git's format for SSH signatures |
 
 Each folder has a README that gives its format.
 

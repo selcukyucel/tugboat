@@ -9,7 +9,7 @@ from importlib.resources.abc import Traversable
 from pathlib import Path
 from typing import Any, NamedTuple
 
-from tugboat import formats, frontmatter
+from tugboat import formats, frontmatter, signing
 from tugboat.errors import DataError, TugError
 from tugboat.strict_json import read_json_file
 from tugboat.version import installed_version
@@ -54,6 +54,13 @@ def _read_markdown(path: Path) -> tuple[dict[str, Any], str]:
     except UnicodeDecodeError as error:
         raise DataError("is not valid UTF-8") from error
     return frontmatter.parse(text)
+
+
+def _read_text(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as error:
+        raise DataError("cannot be read as text") from error
 
 
 def _markdown_files(folder: Path) -> Iterator[Path]:
@@ -222,6 +229,12 @@ def check_team_repo(root: str | os.PathLike[str]) -> Report:
             for platform in formats.platforms_of_rules(named):
                 if profile and not any(repo["platform"] == platform for repo in profile["app_repos"]):
                     check.warning(path, f"names only {platform} rules, and the project profile has no {platform} repo. No agent will get the skill.")
+
+    signers = root_path / signing.SIGNERS_FILE
+    if signers.exists() or signers.is_symlink():
+        check.attempt(signers, lambda: signing.parse_signers(_read_text(signers)))
+    else:
+        check.warning(signing.SIGNERS_FILE, "is not there. Without the team's signing keys no task record can be verified. `tug signing propose` adds a key.")
 
     order = {"error": 0, "warning": 1}
     return Report(check.files_checked, sorted(check.problems, key=lambda problem: (order[problem.level], problem.path)))

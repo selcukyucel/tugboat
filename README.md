@@ -38,7 +38,7 @@ The other ways are on [uv's installation page](https://docs.astral.sh/uv/getting
 **2. Install Tugboat.**
 
 ```sh
-uv tool install git+https://github.com/selcukyucel/tugboat@v0.31.0
+uv tool install git+https://github.com/selcukyucel/tugboat@v0.32.0
 tug version
 ```
 
@@ -142,6 +142,7 @@ One machine can serve several projects. Each project's minimum is checked in tha
 | `tug status` | Prints the task brief: where the work on this repo's task stopped | Works. No command makes a task record yet, so it has only shown made-up records. |
 | `tug doctor` | Checks that this machine and this app repo are ready: what is configured on disk, and what was seen working in a session | Works |
 | `tug doctor observe` | The part of the setup check that an agent runs inside a session, through the skill `tug-setup-check` | Works |
+| `tug signing use`, `propose`, `check` | Sets up signed commits for the team repo: picks this machine's SSH key, proposes it for the team repo's `signers` file, and checks the setup with GitHub | Works. Not yet run against GitHub with a real key. |
 | `tug update` | Updates `tug` to the newest release | Works |
 | `tug expire` | Removes records older than six months, after confirmation | Not built yet |
 | `tug remove` | Takes Tugboat out of a repo, or out of every repo on the machine | Works. See "Remove Tugboat". |
@@ -739,6 +740,63 @@ How to use this brief:
 - **The machine's name** in a record is its host name without the network part. The variable `TUG_MACHINE` replaces it.
 
 Reading 10,000 records takes about 0.7 seconds on a developer Mac. That is every record of a busy team in six months.
+
+## Signed commits and verified identity
+
+A task record must prove which GitHub account wrote it. Tugboat makes no key and stores no private key. It uses Git's own commit signing, with an SSH key the developer already has. This version has the setup and its checks. Signing the records themselves comes with the task that publishes them.
+
+Three things must be in place. `tug doctor` reports on each.
+
+| What | Who | How |
+|---|---|---|
+| The key is a signing key of the developer's GitHub account | Each developer | GitHub: Settings, SSH and GPG keys, New SSH key, key type "Signing Key" |
+| The key is in the team repo's `signers` file, beside the account | Each developer proposes, a person merges | `tug signing use`, then `tug signing propose` |
+| GitHub requires signed commits on the team repo's `main` and `records` | A person with admin rights, once | The team repo's settings in GitHub: see below |
+
+### Each developer, once for each machine
+
+```sh
+tug signing use ~/.ssh/id_ed25519.pub   # the public key of an SSH key you have
+tug signing propose                     # opens the pull request that adds it to the team repo
+tug signing check                       # after the merge: signs one test commit and asks GitHub
+```
+
+- **`tug signing use`** tells Git to sign with that key inside Tugboat's own clone of the team repo, and nowhere else. Your other repos keep their own signing, also when they sign with GPG. Tugboat reads the public key file and never the private key.
+- **`tug signing propose`** adds one line to the team repo's `signers` file: your GitHub account, and the public key without its comment. It asks `gh` for the account name; `--login` gives it by hand.
+- **`tug signing check`** signs a commit that is on no branch and verifies it against `signers`, as publishing and fetching will. Then it asks GitHub whether signed commits are required on both branches and whether the key is a signing key of your account. `tug doctor` shows what it saw for 30 days.
+- **Proposals are signed too.** Once a machine has a key, every pull request that `tug` opens in the team repo has a signed commit.
+
+SSH keys only. Git 2.34 or newer signs with them.
+
+### The team repo's `signers` file
+
+```
+# one line for each key
+pat-dev namespaces="git" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA...
+sam-dev namespaces="git" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA...
+```
+
+- **The format is Git's own** for SSH signatures ("allowed signers"), so Git checks a signature against it with no network.
+- **Who a machine is, is not typed in anywhere.** It is the account that `signers` gives for the machine's key.
+- **One key belongs to one account.** An account may have several keys, one for each machine.
+- **A line that would let one key sign for others is refused:** a pattern in place of the account, a list of accounts, or a certificate authority.
+- **To retire a key, keep its line** and add `valid-before="YYYYMMDD"`. The records it signed before that day still verify. A deleted line makes them unverified.
+- **Before merging a key, the reviewer checks it** against the account's signing keys in GitHub. The list is public: `gh api users/<account>/ssh_signing_keys`.
+
+### In GitHub, once for each team repo
+
+A person with admin rights turns on "Require signed commits" for two branches:
+
+- **`main`:** in the branch protection rule that already requires a pull request, tick "Require signed commits".
+- **`records`:** a rule for the branch name `records` with "Require signed commits" ticked, and force pushes and deletions not allowed. The rule can be made before the branch exists. It must not require a pull request: Tugboat pushes records to this branch directly.
+
+With signed commits required on `main`, GitHub's "Rebase and merge" no longer works there. "Squash and merge" and "Create a merge commit" do: GitHub signs those commits itself.
+
+### What this proves, and what it does not
+
+- **It proves the account and the key.** A verified record was signed with a key that the team repo lists for that GitHub account, and that GitHub knows as a signing key of the account.
+- **It does not prove that a person acted.** An agent that runs on the developer's machine can use a key that is unlocked there. Only a key that needs a touch or a fingerprint for each signature proves that the person was present. Such a key has the type `sk-ssh-ed25519@openssh.com` or `sk-ecdsa-sha2-nistp256@openssh.com`, and `tug doctor` says when a machine uses one. A project may require them.
+- **The setting is checked, not enforced, by Tugboat.** GitHub refuses an unsigned push to a branch that requires signed commits. `tug doctor` shows what `tug signing check` last saw, and that can be up to 30 days old.
 
 ## Proposing a change to the team repo
 
