@@ -645,19 +645,22 @@ Records live in the team repo, on one branch named `records`, and nowhere else. 
 No file holds the state of a task. It is computed, each time it is needed, from the records of the story for one app repo. This version has the computation. The brief that shows it comes with a later task.
 
 - **A record older than six months is left out on every read**, by its own time and not by when it was committed. Six months are counted on the calendar. Nothing in a state, a result, or a history comes from such a record.
-- **The newest checkpoint is the base.** Events after it are applied on top. Events before it stay in the history and no longer change the state.
-- **The newest result of each check counts.** An earlier one stays in the history.
+- **The newest checkpoint is the base.** The step, the pending choice, and the story come from it, and events after it are applied on top.
+- **The newest result of each check counts**, also one from before the checkpoint that the checkpoint's machine had not yet seen. A checkpoint never hides a result. An earlier result stays in the history.
 - **A result counts only for what it was made for.** It is marked stale, with the reason, when:
 
 | What changed | Which results go stale |
 |---|---|
-| The commit the app repo is on | Every result |
-| The team's rules (anything under `policies/` in the team repo) | The analysis |
+| The files of the commit the app repo is on | Every result |
+| A rule the repo is judged by: the company's (`policies/company/`) or its platform's (`policies/ios/` or `policies/android/`) | The analysis |
 | An acceptance criterion of the story | The acceptance report and the QA pack |
 
-- **A change elsewhere in the team repo is no change of the rules.** A merged knowledge note leaves the analysis current.
-- **Criteria are compared as text.** The same criteria in another order are no change.
-- **What cannot be worked out is not assumed.** When the old revision of the team repo is not in the clone, or the acceptance report is no longer among the records, the result is marked stale.
+A stale result costs one more run of a check or of an agent. So a change that cannot have changed what a result says leaves it current:
+
+- **Another commit with the same files is no change.** A squash, a reworded commit message, and an empty commit leave every result current. A rebase that brings in other people's changes does not.
+- **A rule of the other platform is no change**, and neither is anything else in the team repo. A merged knowledge note, a changed Android rule in an iOS repo, and a changed agent definition leave the analysis current.
+- **Criteria are compared as text**, without the list mark, the check box and whether it is ticked, capital letters, spacing, and the full stop at the end. The same criteria in another order are no change. A reworded criterion is a change.
+- **What cannot be worked out is not assumed.** When a commit or a revision is not on this machine, or the acceptance report is no longer among the records, the result is marked stale.
 - **Who holds a task:** every claim, minus those their own author released with a handover note afterwards. Two claims are shown side by side. Nothing is locked.
 - **A record from a newer tool is skipped and named.** So is a file that cannot be read.
 - **A result that names no report is judged by its commit only**, because nothing says what kind of result it is.

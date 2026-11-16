@@ -125,6 +125,26 @@ class StaleTests(unittest.TestCase):
         self.assertEqual([item.status for item in state.results], ["passed", "failed", "blocked"])  # what it said is kept
         self.assertEqual(len(state.history), 6)  # and nothing leaves the history
 
+    def test_another_commit_with_the_same_files_leaves_the_results_current(self):
+        asked = []
+
+        def answer(value):
+            def same_content(old, new):
+                asked.append((old, new))
+                return value
+
+            return same_content
+
+        # A squash or a reworded message: a new commit, the same candidate.
+        self.assertEqual(set(self.stale(commit=OTHER_COMMIT, same_content=answer(True)).values()), {()})
+        self.assertEqual(set(asked), {(COMMIT, OTHER_COMMIT)})
+        self.assertEqual(set(self.stale(commit=OTHER_COMMIT, same_content=answer(False)).values()), {("the commit changed",)})
+        # What cannot be worked out is not assumed to be fine.
+        self.assertEqual(set(self.stale(commit=OTHER_COMMIT, same_content=answer(None)).values()), {("the commit changed",)})
+        asked.clear()
+        self.assertEqual(set(self.stale(commit=COMMIT, same_content=answer(False)).values()), {()})
+        self.assertEqual(asked, [])  # the same commit needs no question
+
     def test_only_what_is_given_is_judged(self):
         self.assertEqual(set(self.stale().values()), {()})
 
@@ -158,6 +178,16 @@ class StaleTests(unittest.TestCase):
         self.assertEqual(self.stale(criteria=self.criteria), {"unit-tests": (), "analysis": (), "acceptance": ()})
         reordered = [f"  {text}  " for text in reversed(self.criteria)]
         self.assertEqual(self.stale(criteria=reordered)["acceptance"], ())  # the same criteria in another order
+        # What cannot change the meaning is no change: a list mark, a check box and its tick, capitals, the full stop.
+        first, second = self.criteria
+        for name, now in (
+            ("an open check box", [f"- [ ] {first}", f"- [ ] {second}"]),
+            ("a ticked check box", [f"- [x] {first}", f"* [X] {second}"]),
+            ("a numbered list", [f"1. {first}", f"2) {second}"]),
+            ("capitals and the full stop", [first.upper(), second.rstrip(".")]),
+        ):
+            with self.subTest(name=name):
+                self.assertEqual(self.stale(criteria=now)["acceptance"], ())
         for name, now in (
             ("reworded", [self.criteria[0], "It works offline, also on a slow network."]),
             ("one added", [*self.criteria, "It is logged."]),
@@ -276,14 +306,41 @@ class CheckpointTests(unittest.TestCase):
         self.assertEqual({name: (item.status, item.stale) for name, item in by_name(state).items()}, {"unit-tests": ("passed", ()), "build": ("passed", ("the commit changed",))})
         self.assertEqual(state.story, STORY)
 
-    def test_the_newest_checkpoint_is_the_base_and_events_before_it_are_history_only(self):
-        early = event(3, results=[result("lint", "failed")], day="2026-09-30")
+    def test_the_newest_checkpoint_is_the_base_of_the_step_and_the_pending_choice(self):
+        early = event(3, "analysis-done", day="2026-09-30", next_action="An earlier next action.")
         first = self.checkpoint(1, "2026-10-01", pending="An earlier question?")
         second = self.checkpoint(1, "2026-10-05", pending=None)
         state = state_of([early, first, second])
         self.assertIsNone(state.pending_choice)
-        self.assertNotIn("lint", by_name(state))  # the checkpoint is the full state at its time
+        self.assertEqual((state.step, state.next_action), ("checks-run", "Wait for the developer's choice."))  # not the earlier event's
         self.assertEqual(state.history, (early, first, second))
+
+    def test_a_checkpoint_does_not_hide_a_result_its_machine_had_not_seen(self):
+        # Another machine ran two checks. This machine saved its checkpoint before those records reached it.
+        unseen = event(3, results=[result("lint", "failed"), result("unit-tests")], day="2026-09-30", commit=OTHER_COMMIT, machine="sams-mac")
+        checkpoint = self.checkpoint(1, "2026-10-01")
+        state = state_of([unseen, checkpoint], commit=OTHER_COMMIT)
+        found = {name: (item.status, item.commit, item.stale) for name, item in by_name(state).items()}
+        self.assertEqual(found["lint"], ("failed", OTHER_COMMIT, ()))  # a check the checkpoint does not know
+        self.assertEqual(found["unit-tests"], ("passed", OTHER_COMMIT, ()))  # newer than the result the checkpoint saved
+        self.assertEqual(found["build"], ("passed", COMMIT, ("the commit changed",)))  # the checkpoint's own
+        self.assertEqual(state.step, "checks-run")  # the step is the checkpoint's
+
+    def test_an_earlier_result_does_not_replace_what_a_checkpoint_saved(self):
+        newer = event(8, results=[result("unit-tests")], day="2026-04-14", commit=OTHER_COMMIT)  # after the failed run of minute 6
+        saved = taskstate.checkpoint_state(taskstate.compute([*self.old, newer], TASK, REPO))
+        checkpoint = event(1, "checkpoint", day="2026-10-01", state=saved)
+        earlier = event(9, results=[result("unit-tests", "failed")], day="2026-06-01")  # in the window, and older than nothing the checkpoint saved
+        state = state_of([checkpoint, earlier])
+        self.assertEqual(by_name(state)["unit-tests"].status, "failed")  # it is the newest by its own time
+        older = Stored(earlier.path, {**earlier.record, "at": "2026-04-14T10:07:00Z"})
+        self.assertEqual(by_name(taskstate.compute([checkpoint, older], TASK, REPO))["unit-tests"].status, "passed")
+
+    def test_a_checkpoint_with_no_story_takes_it_from_a_first_event_it_had_not_seen(self):
+        saved = {**taskstate.checkpoint_state(taskstate.compute(self.old, TASK, REPO)), "story": None}
+        state = state_of([started(2, "2026-09-30"), event(1, "checkpoint", day="2026-10-01", state=saved)])
+        self.assertEqual(state.story, STORY)
+        self.assertEqual(state.step, "checks-run")
 
 
 class ClaimTests(unittest.TestCase):
@@ -380,6 +437,14 @@ class LoadTests(InitCase):
         self.assertIs(rules_changed(first, after_rule), True)
         self.assertIs(rules_changed(after_rule, after_rule), False)
         self.assertIsNone(rules_changed("9" * 40, after_rule))  # a revision this clone does not have
+        # An app repo is judged by the company's rules and its platform's own, so another platform's rule is no change.
+        self.assertIs(taskstate.rules_changed_in(self.clone, "ios")(first, after_rule), True)
+        self.assertIs(taskstate.rules_changed_in(self.clone, "android")(first, after_rule), False)
+        after_company = self.merge_into_team_repo("policies/company/COM-777.md", "---\nid: COM-777\n---\nA rule.\n")
+        self.assertIs(taskstate.rules_changed_in(self.clone, "android")(after_rule, after_company), True)
+        after_page = self.merge_into_team_repo("policies/README.md", "How the rules are kept.\n")
+        self.assertIs(taskstate.rules_changed_in(self.clone, "ios")(after_company, after_page), False)  # a page beside the rules is no rule
+        self.assertIs(rules_changed(after_company, after_page), True)  # with no platform, everything in the folder counts
 
         report = made(ANALYSIS_REPORT, 20, team_repo_revision=first)
         recordstore.write(self.address, report.record)
@@ -391,6 +456,34 @@ class LoadTests(InitCase):
 
         self.assertEqual(stale(after_note), ())
         self.assertEqual(stale(after_rule), ("the team's rules changed",))
+
+    def test_the_app_repo_itself_says_whether_two_commits_hold_the_same_files(self):
+        def commit(*options):
+            self.git(self.ios, "commit", "--quiet", "--allow-empty", *options)
+            return self.git(self.ios, "rev-parse", "HEAD")
+
+        (self.ios / "Fee.swift").write_text("let fee = 1\n", encoding="utf-8")
+        self.git(self.ios, "add", "-A")
+        first = commit("-m", "Add the fee")
+        reworded = commit("--amend", "-m", "Add the fee row")
+        empty = commit("-m", "Nothing new")
+        (self.ios / "Fee.swift").write_text("let fee = 2\n", encoding="utf-8")
+        self.git(self.ios, "add", "-A")
+        changed_file = commit("-m", "Raise the fee")
+        same = taskstate.same_content_in(self.ios)
+        self.assertIs(same(first, first), True)
+        self.assertIs(same(first, reworded), True)  # another commit, the same files
+        self.assertIs(same(first, empty), True)
+        self.assertIs(same(first, changed_file), False)
+        self.assertIsNone(same("9" * 40, changed_file))  # a commit this repo does not have
+
+        recordstore.write(self.address, event(21, results=[result("build")], commit=first).record)
+
+        def stale(now_commit):
+            return by_name(taskstate.load(self.address, TASK, REPO, now=NOW, commit=now_commit, same_content=same).state)["build"].stale
+
+        self.assertEqual(stale(empty), ())
+        self.assertEqual(stale(changed_file), ("the commit changed",))
 
 
 if __name__ == "__main__":
