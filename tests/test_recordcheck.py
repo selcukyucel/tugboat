@@ -3,7 +3,7 @@ import os
 import unittest
 
 from tugboat import recordcheck, recordstore, records, taskstate
-from tugboat.errors import TugError
+from tugboat.errors import DataError, TugError
 
 from test_formats import changed
 from test_knowledge import AWS_KEY, GITHUB_TOKEN
@@ -136,6 +136,37 @@ class CheckTests(StoreCase):
         self.git(self.store, "mv", published.path, renamed)
         found = recordstore.changes(self.repo)
         self.assertEqual((found.new, found.other, found.changed), ((), (), (renamed,)))
+
+
+class WriteTests(StoreCase):
+    def test_a_command_writes_a_clean_record_as_the_store_does(self):
+        stored = recordcheck.write(self.repo, CLAIM)
+        self.assertEqual(recordstore.read_all(self.repo).records, (stored,))
+        self.assertEqual(recordcheck.check(self.repo), recordcheck.Checked((stored,), ()))
+
+    def test_a_record_with_a_secret_is_refused_and_nothing_is_written(self):
+        bad = seeded(SUMMARY, "2026-11-15T10:15:31Z", "b", ("summary",), f"The CI token is {GITHUB_TOKEN}.")
+        with self.assertRaises(recordcheck.Refused) as raised:
+            recordcheck.write(self.repo, bad)
+        self.assertEqual(raised.exception.reasons, ("its field `summary` holds what looks like a secret (GitHub token)",))
+        self.assertEqual(str(raised.exception), "the record was not written: its field `summary` holds what looks like a secret (GitHub token). Write it again without the secret.")
+        self.assertNotIn(GITHUB_TOKEN, str(raised.exception))
+        self.assertEqual(self.files(), [])  # no secret reached the disk, and there is nothing to discard
+        # The session writes it again without the secret.
+        again = recordcheck.write(self.repo, at(SUMMARY, "2026-11-15T10:15:40Z", "c"))
+        self.assertEqual(recordcheck.check(self.repo), recordcheck.Checked((again,), ()))
+
+    def test_a_writer_with_nobody_to_ask_keeps_the_record_and_it_is_held_back(self):
+        bad = seeded(SUMMARY, "2026-11-15T10:15:31Z", "b", ("summary",), f"The CI token is {GITHUB_TOKEN}.")
+        kept = recordcheck.write(self.repo, bad, keep=True)
+        checked = recordcheck.check(self.repo)
+        self.assertEqual((checked.ready, [held.path for held in checked.held]), ((), [kept.path]))
+        self.assertEqual(len(taskstate.load(self.repo, SUMMARY["task"], SUMMARY["repo"]).state.history), 1)  # it still counts on this machine
+
+    def test_a_record_that_fails_its_schema_is_refused_by_the_formats_as_before(self):
+        with self.assertRaisesRegex(DataError, "claim has unknown fields: password_hint"):
+            recordcheck.write(self.repo, {**CLAIM, "password_hint": "none"}, keep=True)
+        self.assertEqual(self.files(), [])
 
 
 class DiscardTests(StoreCase):

@@ -1,6 +1,7 @@
 import re
 import unittest
 from html.parser import HTMLParser
+from pathlib import Path
 
 from tugboat import records, reportpage
 from tugboat.reportpage import Bullets, Facts, Heading, Link, Table, Text
@@ -134,7 +135,9 @@ class MarkdownTests(unittest.TestCase):
             ("===", "\\==="),
             ("    four spaces in front", "four spaces in front"),
             ("a\\*b", "a\\\\\\*b"),
-            ("@everyone please look, says pat@example.com", "@​everyone please look, says pat@example.com"),
+            ("@everyone please look, says pat@example.com", "`@everyone` please look, says pat@example.com"),
+            ("cc @acme/mobile_team and @pat-dev.", "cc `@acme/mobile_team` and `@pat-dev`."),
+            ("`@lead` in code of its own", "\\``@lead`\\` in code of its own"),
             ("&lt;script&gt;", "&amp;lt;script&amp;gt;"),
             ("version 2.8.9 is 3 - 1 = 2 # fine", "version 2.8.9 is 3 - 1 = 2 # fine"),  # the same marks inside a line are left alone
         ):
@@ -153,7 +156,7 @@ class MarkdownTests(unittest.TestCase):
                 page = reportpage.report_markdown(report, story)
                 self.assertNotRegex(page, r"<(?!https://github\.com/acme/shop-ios/issues/311>)")  # no tag, and no link but the story's own
                 self.assertNotRegex(page, r"(?<!\\)\]\(")  # no Markdown link or image
-                self.assertNotRegex(page, r"(?<![A-Za-z0-9])@[A-Za-z0-9]")  # nobody is notified
+                self.assertNotRegex(page, r"(?<![A-Za-z0-9`])@[A-Za-z0-9]")  # nobody is notified: a name after "@" is shown as code
                 # The same headings, items, and columns as the page of the sample report: the text added no block and no column.
                 plain = reportpage.report_markdown(records.validate_record(samples[report["report"]]), STORY if story else None)
                 self.assertEqual(self.shape(page), self.shape(plain))
@@ -218,12 +221,20 @@ class PageTests(unittest.TestCase):
         page = reportpage.report_markdown(records.validate_record(changed(QA_PACK, criteria=[], risks=[], exploratory_tests=[], build=None, feature_flags=[])))
         self.assertEqual(page.count("None named."), 5)
 
+    def test_no_file_of_the_tool_holds_a_character_that_draws_nothing(self):
+        # Such a character in source text hides what the code does. It is written as an escape, such as \\u202e.
+        root = Path(__file__).resolve().parent.parent
+        unseen = re.compile("[\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]")
+        files = [*root.glob("src/**/*.py"), *root.glob("src/**/*.md"), *root.glob("tests/*.py"), root / "README.md"]
+        self.assertGreater(len(files), 50)
+        self.assertEqual([path.relative_to(root).as_posix() for path in files if unseen.search(path.read_text(encoding="utf-8"))], [])
+
     def test_what_draws_nothing_is_taken_out(self):
-        hidden = "safe‮⁦ text\x1b[31m red\x07‏"
+        hidden = "safe\u202e\u2066 text\x1b[31m red\x07\u200f"
         self.assertEqual(reportpage.clean(hidden), "safe text[31m red")
         self.assertEqual(reportpage.clean("a\r\nb\rc\td"), "a\nb\nc d")
         self.assertEqual(reportpage.to_markdown([Heading(2, hidden), Bullets((hidden,))]), "## safe text\\[31m red\n\n- safe text\\[31m red\n")
-        self.assertNotIn("‮", reportpage.to_html([Text(hidden)], hidden))
+        self.assertNotIn("\u202e", reportpage.to_html([Text(hidden)], hidden))
 
 
 if __name__ == "__main__":

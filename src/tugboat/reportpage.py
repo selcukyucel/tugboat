@@ -71,9 +71,10 @@ Block = Heading | Text | Facts | Bullets | Table
 
 # Characters that draw nothing and can change what a reader sees: control characters, and the marks that turn the
 # direction of text around. A tab and a line break are kept.
-_UNSEEN = re.compile("[\x00-\x08\x0b-\x1f\x7f-\x9f‎‏‪-‮⁦-⁩]")
+_UNSEEN = re.compile("[\x00-\x08\x0b-\x1f\x7f-\x9f\u200e\u200f\u202a-\u202e\u2066-\u2069]")
 _MARKDOWN_MARKS = re.compile(r"([\\`*_\[\]~|])")
-_MENTION = re.compile(r"(?<![A-Za-z0-9])@(?=[A-Za-z0-9])")
+# "@name" or "@org/team" as GitHub reads it. An e-mail address has a letter or a digit before the "@" and is left alone.
+_MENTION = re.compile(r"(?<![A-Za-z0-9])(@[A-Za-z0-9][A-Za-z0-9_-]*(?:/[A-Za-z0-9][A-Za-z0-9_.-]*)?)")
 _LINE_START = re.compile(r"^(?:([#+=-])|([0-9]{1,9})([.)]))")
 _SAFE_LINK = re.compile(r"^https://[A-Za-z0-9.-]+(?::[0-9]{1,5})?(?:/[A-Za-z0-9._~:/?#\[\]@!$&'*+,;=%-]*)?$")
 
@@ -83,12 +84,17 @@ def clean(text: str) -> str:
     return _UNSEEN.sub("", text.replace("\r\n", "\n").replace("\r", "\n")).replace("\t", " ")
 
 
+def _markdown_marks(text: str) -> str:
+    text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    return _MARKDOWN_MARKS.sub(r"\\\1", text)
+
+
 def _markdown_line(line: str) -> str:
     line = line.strip()  # four spaces in front would make a code block
-    line = line.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-    line = _MARKDOWN_MARKS.sub(r"\\\1", line)
-    # An "@name" would notify that person where the page is posted. A character that draws nothing after the "@" stops it.
-    line = _MENTION.sub("@​", line)
+    # An "@name" would notify that person where the page is posted. As code it notifies nobody, and the reader sees
+    # that it was changed: nothing hidden is put into the text. The pattern lets no mark into the code.
+    pieces = _MENTION.split(line)
+    line = "".join(f"`{piece}`" if index % 2 else _markdown_marks(piece) for index, piece in enumerate(pieces))
     # A heading, a list, a quote, or a rule starts with one of these.
     return _LINE_START.sub(lambda match: f"\\{match.group(1)}" if match.group(1) else f"{match.group(2)}\\{match.group(3)}", line)
 

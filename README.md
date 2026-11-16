@@ -676,8 +676,10 @@ Publishing puts a record in the team repo, where every teammate and every teamma
 - **Secrets and credentials.** No text in the record may match one of the secret patterns. They are the same patterns that guard a write by the agent and a knowledge note: see "The check before each action". A failing network test prints request headers, so a sign-in in an `Authorization` or `Cookie` header is one of them.
 - **A reason names the field and the kind of secret**, such as: its field `checks[1].summary` holds what looks like a secret (GitHub token). It never repeats the secret.
 - **Nothing is written by a check.** The reason is worked out again each time, from the file as it is.
+- **A secret is stopped before the record is written, where that is possible.** A command that a session calls refuses a record with a finding, gives the reasons, and writes nothing. The session writes the record again without the secret. So no secret is on the disk, and nothing has to be deleted.
+- **A writer with nobody to ask keeps the record**, such as the hook that saves a checkpoint before a conversation is compacted. Losing the checkpoint would cost more. That record is held back at publishing.
 - **A record that is held back still counts on its own machine.** The state of a task is worked out from published and unpublished records alike.
-- **The way out is a new record.** A record is never edited. The session writes the record again without the secret, and the one that was held back is discarded. Only a record that was held back can be discarded.
+- **The way out for a held record is a new record.** A record is never edited. A new record is written without the secret, and the one that was held back is discarded. Only a record that was held back can be discarded.
 - **Only new record files can be published.** A file in the records folder that is no record, and a published record that somebody edited or deleted on the machine, are named and left out.
 
 The patterns find well-known shapes. They do not find every secret: see "Limits of the checks".
@@ -688,7 +690,7 @@ A report can be written as Markdown, for a comment on the story, or as one HTML 
 
 - **Text is escaped in one place.** A page is built from blocks that hold text as it is in the record, and every piece of text is escaped as the page is written. No text reaches a page another way.
 - **In HTML**, a story title such as `<script>alert(1)</script>` is shown as those characters. The page has no script, loads nothing from elsewhere, and says so to the browser with a content security policy.
-- **In Markdown**, HTML and Markdown marks are written so that they show as themselves, and an `@name` is written so that it notifies nobody.
+- **In Markdown**, HTML and Markdown marks are written so that they show as themselves. An `@name` is shown as code, so that it notifies nobody and the reader sees that it was changed. No hidden character is put into the text.
 - **The one link on a page is the story's own**, and only when it is a plain `https` address.
 - **Characters that draw nothing are taken out:** control characters, and the marks that turn the direction of text around.
 - **A page for a stale report says so first**, with the reason.

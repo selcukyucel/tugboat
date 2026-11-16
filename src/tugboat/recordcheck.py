@@ -19,6 +19,14 @@ given. Three checks:
 Nothing is written by a check. The reason a record is held back is worked
 out again each time, from the file as it is, so it cannot go out of date.
 
+The cheapest moment to stop a secret is before the record is written,
+while the session that made the text can still write it again. So `write`
+is how a command adds a record: it refuses a record with a finding, gives
+the reasons, and writes nothing. Then no secret is on the disk and nothing
+has to be deleted. Only a writer with nobody to ask, such as the hook that
+saves a checkpoint before a conversation is compacted, keeps such a record:
+losing the checkpoint would cost more.
+
 A record that is held back still counts on its own machine: the state of
 the task is worked out from published and unpublished records alike. The
 way out is a new record without the secret, and `discard` for the old one.
@@ -38,6 +46,14 @@ from tugboat import recordstore, records, secretscan
 from tugboat.address import TeamRepoAddress
 from tugboat.errors import DataError, TugError
 from tugboat.recordstore import Stored
+
+
+class Refused(TugError):
+    """A record that was not written, because publishing would hold it back. `reasons` says why."""
+
+    def __init__(self, reasons: tuple[str, ...]) -> None:
+        super().__init__(f"the record was not written: {'; '.join(reasons)}. Write it again without the secret.")
+        self.reasons = reasons
 
 
 class Held(NamedTuple):
@@ -74,11 +90,7 @@ def _kinds(findings: list[secretscan.Finding], several_lines: bool) -> str:
 
 
 def findings(record: Mapping[str, Any]) -> tuple[str, ...]:
-    """Why a checked record may not be published, one reason for each field. Empty for a record that may.
-
-    A command that writes a record can show these at once, while the
-    session that made the text is still open and can write it again.
-    """
+    """Why a checked record may not be published, one reason for each field. Empty for a record that may."""
     reasons = []
     seen = set()
     for name, text in (*records.text_fields(record), *_named_values(record)):
@@ -88,6 +100,22 @@ def findings(record: Mapping[str, Any]) -> tuple[str, ...]:
             kinds = _kinds(found, several_lines="\n" in text)
             reasons.append(f"its field `{name}` holds what looks like a secret ({kinds})")
     return tuple(reasons)
+
+
+def write(address: TeamRepoAddress, record: object, *, keep: bool = False) -> Stored:
+    """Add a record to the store, unpublished. This is how a command writes a record.
+
+    A record that publishing would hold back is refused with `Refused`,
+    and nothing is written: the session reads the reasons and writes the
+    record again. With `keep`, for a writer that has nobody to ask, the
+    record is written all the same and stays on the machine until it is
+    discarded.
+    """
+    checked = records.validate_record(record)
+    reasons = findings(checked)
+    if reasons and not keep:
+        raise Refused(reasons)
+    return recordstore.write(address, checked)
 
 
 def check_one(address: TeamRepoAddress, path: str) -> Stored | Held:
