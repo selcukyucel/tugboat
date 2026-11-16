@@ -8,6 +8,10 @@ The patterns are for well-known token shapes, plus one general shape: a name
 such as `password` or `api_key`, followed by a value that mixes letters with
 two digits or more. A word of prose after `password:` is not a finding, and
 neither is a call or a property in a line of code.
+
+A request header that carries a sign-in is a finding too: `Authorization:
+Bearer <value>` and `Cookie: name=<value>`. A failing network test prints
+them, and the output of a test is what a report quotes.
 """
 
 from __future__ import annotations
@@ -36,6 +40,11 @@ _PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
 _NAMED = re.compile(
     r"(?i)(?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?secret|auth[_-]?key)"
     r"[A-Za-z0-9_]*[\"']?\s*[:=]\s*[\"']?([A-Za-z0-9+/_=-]{12,})"
+)
+# A request header with a sign-in in it, as a log or a failing test prints it. Group 1 is the value.
+_SIGN_IN_HEADERS: tuple[tuple[str, re.Pattern[str]], ...] = (
+    ("sign-in in an Authorization header", re.compile(r"(?i)\bauthorization[\"']?\s*[:=]\s*[\"']?(?:bearer|basic|token|digest)\s+([A-Za-z0-9+/._~=-]{12,})")),
+    ("sign-in in a cookie", re.compile(r"(?i)\b(?:set-)?cookie[\"']?\s*[:=]\s*[\"']?[^=;,\s\"']{1,60}=([A-Za-z0-9+/._~%=-]{16,})")),
 )
 _URL_PASSWORD = re.compile(r"[a-z][a-z0-9+.-]*://[^/\s:@]+:([^/\s@]{3,})@")
 _PLACEHOLDER = re.compile(r"(?i)^(?:x+|\*+|\.+|password|passwd|pass|pwd|secret|token|changeme|redacted|example[a-z0-9_-]*|your[a-z0-9_-]*|<.*>|\$\{.*\}|\{\{.*\}\})$")
@@ -68,6 +77,8 @@ def find(text: str) -> list[Finding]:
         kind = next((name for name, pattern in _PATTERNS if pattern.search(line)), None)
         if kind is None and _named_secret(line):
             kind = "password or key"
+        if kind is None:
+            kind = next((name for name, pattern in _SIGN_IN_HEADERS if any(_machine_made(match.group(1)) for match in pattern.finditer(line))), None)
         if kind is None and any(not _PLACEHOLDER.fullmatch(match.group(1)) for match in _URL_PASSWORD.finditer(line)):
             kind = "password in a URL"
         if kind is not None:

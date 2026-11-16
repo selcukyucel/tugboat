@@ -41,6 +41,11 @@ class SecretTests(unittest.TestCase):
             ("password or key", "CLIENT_SECRET: Zx9Yw8Vu7Ts6Rq5P"),
             ("password or key", '"api_key": "abc123def456ghi789"'),
             ("password in a URL", "postgres://admin:s3cretpw@db.example.com/shop"),
+            ("sign-in in an Authorization header", "Authorization: Bearer " + "f3a91c0b77e24d5aa8c619d2"),
+            ("sign-in in an Authorization header", "> authorization: Basic " + "dXNlcjpwYXNzd29yZDEyMw=="),
+            ("sign-in in an Authorization header", 'headers = {"Authorization": "token ' + '0a1b2c3d4e5f6a7b8c9d"}'),
+            ("sign-in in a cookie", "Set-Cookie: session=" + "9f8e7d6c5b4a39281706abcd; Path=/; HttpOnly"),
+            ("sign-in in a cookie", "Cookie: sid=" + "s%3A9f8e7d6c5b4a3928.1706abcd"),
         ):
             with self.subTest(text=text[:24]):
                 self.assertEqual(secretscan.find(f"First line.\n{text}\nLast line."), [secretscan.Finding(kind, 2)])
@@ -63,6 +68,15 @@ class SecretTests(unittest.TestCase):
             "See https://example.com/docs/auth#tokens and Sources/Auth/TokenStore.swift:42.",
             "The access token lives for 15 minutes and the refresh token for 30 days.",
             "commit 9e2ae27c0ffee1234567890abcdef1234567890a fixed it",
+            "Authorization: Bearer <token>",
+            "Authorization: Bearer YOUR_ACCESS_TOKEN_HERE",
+            'request.setValue("Bearer \\(token)", forHTTPHeaderField: "Authorization")',
+            'header("Authorization", "Bearer $accessToken")',
+            "The Authorization header carries a bearer token that lives for 15 minutes.",
+            "Authorization: Bearer {{access_token}}",
+            "Cookie: theme=dark; lang=en-GB",
+            "Set-Cookie: session=<value>; HttpOnly",
+            "The session cookie is cleared at sign-out.",
         ):
             with self.subTest(text=text):
                 self.assertEqual(secretscan.find(text), [])

@@ -300,7 +300,7 @@ tug notes Sources/Auth/Login/LoginView.swift
 
 **No secrets and no chat transcripts.** `tug team check` fails a note that:
 
-- holds what looks like a secret. The patterns cover private keys, AWS, GitHub, Slack, Google, Stripe, and AI provider keys, signed tokens (JWT), a password inside a URL, and a name such as `password` or `api_key` followed by a value that mixes letters with two digits or more. A sentence about passwords is not a finding, and neither is a call or a property in a line of code.
+- holds what looks like a secret. The patterns cover private keys, AWS, GitHub, Slack, Google, Stripe, and AI provider keys, signed tokens (JWT), a password inside a URL, a sign-in in an `Authorization` or `Cookie` header, and a name such as `password` or `api_key` followed by a value that mixes letters with two digits or more. A sentence about passwords is not a finding, and neither is a call or a property in a line of code.
 - looks like a raw chat transcript: four or more lines that open a turn, such as `User:` and `Assistant:`, from two speakers or more.
 
 The message names the kind of secret and the line. It never repeats the secret. A note that fails is also left out on a developer's machine, so no agent gets it, and sync says which note was left out.
@@ -666,6 +666,35 @@ A stale result costs one more run of a check or of an agent. So a change that ca
 - **A result that names no report is judged by its commit only**, because nothing says what kind of result it is.
 
 Why not a small database: it would need a conversion before each check and before each publish, a second way to read a record, and locking for two writers. The files need none of that, and a person can read them.
+
+### The checks before a record is published
+
+Publishing puts a record in the team repo, where every teammate and every teammate's agent reads it. So each unpublished record is checked first. This version has the checks. The command that publishes comes with a later task.
+
+- **A record that fails a check is held back.** It stays on the machine, and the reason is given. The other records are not held up by it.
+- **The schema.** The file must read as a record of a kind this version knows, with every field valid, at the path its own content gives.
+- **Secrets and credentials.** No text in the record may match one of the secret patterns. They are the same patterns that guard a write by the agent and a knowledge note: see "The check before each action". A failing network test prints request headers, so a sign-in in an `Authorization` or `Cookie` header is one of them.
+- **A reason names the field and the kind of secret**, such as: its field `checks[1].summary` holds what looks like a secret (GitHub token). It never repeats the secret.
+- **Nothing is written by a check.** The reason is worked out again each time, from the file as it is.
+- **A record that is held back still counts on its own machine.** The state of a task is worked out from published and unpublished records alike.
+- **The way out is a new record.** A record is never edited. The session writes the record again without the secret, and the one that was held back is discarded. Only a record that was held back can be discarded.
+- **Only new record files can be published.** A file in the records folder that is no record, and a published record that somebody edited or deleted on the machine, are named and left out.
+
+The patterns find well-known shapes. They do not find every secret: see "Limits of the checks".
+
+### A report as a page
+
+A report can be written as Markdown, for a comment on the story, or as one HTML file. The text in a report comes from outside Tugboat: a story title and its acceptance criteria from the tracker, a finding that quotes source code, the output of a test. On a page all of it shows as the text it is.
+
+- **Text is escaped in one place.** A page is built from blocks that hold text as it is in the record, and every piece of text is escaped as the page is written. No text reaches a page another way.
+- **In HTML**, a story title such as `<script>alert(1)</script>` is shown as those characters. The page has no script, loads nothing from elsewhere, and says so to the browser with a content security policy.
+- **In Markdown**, HTML and Markdown marks are written so that they show as themselves, and an `@name` is written so that it notifies nobody.
+- **The one link on a page is the story's own**, and only when it is a plain `https` address.
+- **Characters that draw nothing are taken out:** control characters, and the marks that turn the direction of text around.
+- **A page for a stale report says so first**, with the reason.
+- **Passed, failed, blocked, and untested stay distinct.**
+
+A bare web address in a story's text still becomes a link where the reader's tool makes one, such as GitHub. It was in the tracker already. How GitHub and Jira show an escaped page is not yet tried: that comes with the task that posts a comment.
 
 ## Proposing a change to the team repo
 

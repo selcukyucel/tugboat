@@ -605,13 +605,18 @@ def kind_of(record: Mapping[str, Any]) -> str:
     return schema_of(record)[0]
 
 
-def text_values(value: object) -> Iterator[str]:
-    """Every piece of text in a record, for the check for secrets that runs before a record is published."""
+def text_fields(value: object, name: str = "") -> Iterator[tuple[str, str]]:
+    """Every piece of text in a record with the name of its field, such as `checks[1].summary`. For the check before a record is published."""
     if isinstance(value, str):
-        yield value
+        yield name, value
     elif isinstance(value, dict):
-        for item in value.values():
-            yield from text_values(item)
+        for key, item in value.items():
+            yield from text_fields(item, f"{name}.{key}" if name else key)
     elif isinstance(value, list):
-        for item in value:
-            yield from text_values(item)
+        for index, item in enumerate(value):
+            yield from text_fields(item, f"{name}[{index}]")
+
+
+def text_values(value: object) -> Iterator[str]:
+    """Every piece of text in a record."""
+    return (text for _name, text in text_fields(value))

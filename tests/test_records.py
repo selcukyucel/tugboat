@@ -420,6 +420,15 @@ class TextTests(unittest.TestCase):
         records.validate_record(seeded)  # the schema passes: the check for secrets is its own step before publishing
         self.assertTrue(any(GITHUB_TOKEN in text for text in records.text_values(seeded)))
 
+    def test_every_piece_of_text_has_the_name_of_its_field(self):
+        fields = dict(records.text_fields(CHECKS_REPORT))
+        self.assertEqual(fields["checks[1].summary"], "CheckoutTests.testTotal: expected 12, got 10")
+        self.assertEqual(fields["task.key"], "acme/shop-ios#311")
+        self.assertEqual(fields["branch"], "feat/checkout")
+        self.assertNotIn("checks[0].summary", fields)  # it holds no text
+        self.assertEqual(dict(records.text_fields(QA_PACK))["feature_flags[0].state"], "on for the test group")
+        self.assertEqual(list(records.text_values(CHECKS_REPORT)), list(fields.values()))
+
     def test_a_checked_record_is_plain_json(self):
         for name, record in EVERY.items():
             with self.subTest(name=name):

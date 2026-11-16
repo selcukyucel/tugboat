@@ -71,6 +71,14 @@ class Unreadable(NamedTuple):
     newer: bool  # a newer tool wrote it: updating `tug` reads it
 
 
+class Changes(NamedTuple):
+    """What Git has not committed in the store. Only `new` can ever be published."""
+
+    new: tuple[str, ...]  # record files that Git has not committed: the unpublished records
+    other: tuple[str, ...]  # new files that are no record files. The tool makes none.
+    changed: tuple[str, ...]  # committed files that were edited, renamed, or deleted on this machine. A record is never edited.
+
+
 class Listing(NamedTuple):
     records: tuple[Stored, ...]  # oldest first, by their own time
     unreadable: tuple[Unreadable, ...]
@@ -236,6 +244,17 @@ def _read_one(file: Path, relative: str) -> dict[str, Any]:
     return checked
 
 
+def read_file(address: TeamRepoAddress, relative: str) -> dict[str, Any]:
+    """One record file of the store, checked. Raises DataError with the reason, or NewerSchema, and names no folder of this machine."""
+    file = folder(address) / relative
+    try:
+        return _read_one(file, relative)
+    except records.NewerSchema:
+        raise
+    except DataError as error:
+        raise DataError(str(error).replace(os.fspath(file), relative)) from error
+
+
 def read_all(address: TeamRepoAddress, task: Mapping[str, Any] | None = None) -> Listing:
     """Every record in the store, published or not, or every record of one story. Never raises for what a file holds."""
     top = folder(address)
@@ -277,14 +296,31 @@ def _moment(stamp: str) -> datetime:
     return datetime.fromisoformat(stamp.replace("Z", "+00:00"))
 
 
-def unpublished(address: TeamRepoAddress) -> tuple[str, ...]:
-    """The record files that Git has not committed yet, relative to the store. Empty when there is no store."""
+def changes(address: TeamRepoAddress) -> Changes:
+    """What Git has not committed in the store, in three groups, with paths relative to the store. Empty when there is no store."""
     store = folder(address)
     if not _is_worktree(store):
-        return ()
+        return Changes((), (), ())
     try:
         entries = git("status", "--porcelain", "-z", "--untracked-files=all", cwd=store).split("\0")
     except GitError:
-        return ()
-    # "??" is a new file, which is all the tool ever makes here. "A " is one that was added and not committed.
-    return tuple(sorted(entry[3:] for entry in entries if entry[:2] in {"??", "A "} and entry.endswith(SUFFIX)))
+        return Changes((), (), ())
+    new, other, changed = [], [], []
+    skip = False
+    for entry in entries:
+        if skip or len(entry) < 4:
+            skip = False  # the old name of a renamed file, which follows its entry; or the empty end of the list
+            continue
+        state, path = entry[:2], entry[3:]
+        skip = "R" in state or "C" in state
+        # "??" is a new file, which is all the tool ever makes here. "A " is one that was added and not committed.
+        if state in {"??", "A "}:
+            (new if path.endswith(SUFFIX) else other).append(path)
+        else:
+            changed.append(path)
+    return Changes(tuple(sorted(new)), tuple(sorted(other)), tuple(sorted(changed)))
+
+
+def unpublished(address: TeamRepoAddress) -> tuple[str, ...]:
+    """The record files that Git has not committed yet, relative to the store. Empty when there is no store."""
+    return changes(address).new
